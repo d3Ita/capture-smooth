@@ -109,6 +109,7 @@ def main():
     ap.add_argument("--start", type=float, default=0, help="start, in seconds of game time")
     ap.add_argument("--seconds", type=float, default=12, help="length of the real-time comparison")
     ap.add_argument("--slow-seconds", type=float, default=4, help="game time shown in slow motion")
+    ap.add_argument("--only-images", action="store_true", help="only the still images (strip, page preview)")
     args = ap.parse_args()
 
     raw, out = Path(args.raw), Path(args.out)
@@ -122,6 +123,9 @@ def main():
     ip = Interp(frames)
 
     n_real = min(int(args.seconds * GAME_FPS), len(frames) - 1)
+    if args.only_images:
+        images(frames, ip, out)
+        return
 
     # Full frame, for the 30 / 90 switch on the page: the original as the console sends it (30 fps)
     # and Capture Smooth x3 (90 fps). Same scene, same length, so the page can jump between them.
@@ -168,7 +172,12 @@ def main():
                      "each game frame held", "7 AI frames between each pair"))
     v.close(out / "compare_slowmo_poster.jpg")
     print("compare_slowmo.mp4")
+    images(frames, ip, out)
+    for p in sorted(out.iterdir()):
+        print(f"  {p.name}: {p.stat().st_size / 1e6:.1f} Mo")
 
+
+def images(frames, ip, out):
     # Frame strip: the pair with the most motion, its two in-betweens at x3.
     diffs = [cv2.absdiff(frames[i], frames[i + 1]).mean() for i in range(len(frames) - 1)]
     i = int(np.argsort(diffs)[int(len(diffs) * 0.85)])  # strong but not a camera cut
@@ -184,9 +193,20 @@ def main():
     gap = np.full((408, 6, 3), 24, np.uint8)
     strip = np.hstack(sum(([t, gap] for t in tiles), [])[:-1])
     cv2.imwrite(str(out / "frames.jpg"), strip, [cv2.IMWRITE_JPEG_QUALITY, 88])
-    print("frames.jpg")
-    for p in sorted(out.iterdir()):
-        print(f"  {p.name}: {p.stat().st_size / 1e6:.1f} Mo")
+    for k, (img, _) in enumerate(panels):  # one file per frame, for the page
+        cv2.imwrite(str(out / f"strip_{k}.jpg"), cv2.resize(img, (960, 540), interpolation=cv2.INTER_AREA),
+                    [cv2.IMWRITE_JPEG_QUALITY, 86])
+    print("frames.jpg, strip_0..3.jpg")
+
+    # Link preview (Discord, X...): 1200x630, a frame with the title on a dark gradient.
+    og = cv2.resize(frames[len(frames) // 2], (1200, 675), interpolation=cv2.INTER_AREA)[22:652].astype(np.float32)
+    shade = np.linspace(0.92, 0.15, 1200, dtype=np.float32)[None, :, None]
+    og = (og * (1 - shade) + np.array([22, 9, 8], np.float32) * shade).astype(np.uint8)
+    cv2.putText(og, "Capture Smooth", (64, 250), cv2.FONT_HERSHEY_DUPLEX, 2.3, (255, 255, 255), 4, cv2.LINE_AA)
+    cv2.putText(og, "30 fps console games at 90 fps", (66, 330), FONT, 1.35, (246, 220, 200), 3, cv2.LINE_AA)
+    cv2.putText(og, "Free AI frame generation for capture cards", (68, 392), FONT, 0.95, (200, 185, 175), 2, cv2.LINE_AA)
+    cv2.imwrite(str(out / "og.jpg"), og, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    print("og.jpg")
 
 
 if __name__ == "__main__":

@@ -3,181 +3,724 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Capture Smooth</title>
-<meta name="description" content="Free AI frame generation for capture card feeds: 30 fps console games shown at 60 to 90 fps with low latency.">
+<title>Capture Smooth: 30 fps console games at 90 fps</title>
+<meta name="description" content="Free, open-source AI frame generation for capture card feeds. Your 30 fps console games shown at 60 to 90 fps on your PC, with low latency.">
+<meta name="theme-color" content="#000000">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Capture Smooth: 30 fps console games at 90 fps">
+<meta property="og:description" content="Free, open-source AI frame generation for your capture card. NVIDIA CUDA or any DirectX 12 GPU.">
+<meta property="og:url" content="https://d3ita.github.io/capture-smooth/">
+<meta property="og:image" content="https://d3ita.github.io/capture-smooth/media/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="media/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0d0f1a; --panel: #151829; --line: #262a43; --text: #e8eaf4; --muted: #9aa0bd;
-    --accent: #a98bff; --accent2: #6ec6ff;
+    color-scheme: dark;
+    --black: #000; --band: #0e0e10; --card: #151518; --card2: #1c1c20;
+    --line: #2a2a30; --line2: #3a3a42;
+    --text: #f2f2f4; --muted: #a3a3ad; --dim: #6e6e78;
+    --accent: #9d7bff; --accent2: #36d6f0; --accentDark: #6d4ce0;
   }
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) { --bg: #f6f7fb; --panel: #ffffff; --line: #dde0ee; --text: #171a2b; --muted: #5b6080;
-      --accent: #6c4ce0; --accent2: #1a7fc4; }
+  * { box-sizing: border-box; margin: 0; }
+  html { scroll-behavior: smooth; scroll-padding-top: 64px; }
+  body { background: var(--black); color: var(--text); font: 17px/1.6 Barlow, system-ui, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  a { color: inherit; text-decoration: none; }
+  img, video { display: block; max-width: 100%; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 24px; }
+  .cond { font-family: "Barlow Condensed", Barlow, sans-serif; }
+
+  /* nav */
+  nav { position: fixed; inset: 0 0 auto; z-index: 60; height: 60px; background: rgba(0, 0, 0, .86);
+    backdrop-filter: blur(12px); border-bottom: 1px solid #1d1d22; }
+  nav .wrap { display: flex; align-items: center; height: 100%; gap: 34px; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 700 19px "Barlow Condensed", sans-serif; letter-spacing: .04em;
+    text-transform: uppercase; }
+  .brand img { width: 28px; height: 28px; }
+  .links { display: flex; gap: 26px; font-size: 15px; font-weight: 500; color: #cfcfd6; }
+  .links a { position: relative; padding: 18px 0; }
+  .links a:hover { color: #fff; }
+  .links a:hover::after { content: ""; position: absolute; left: 0; right: 0; bottom: 12px; height: 2px; background: var(--accent); }
+  .navr { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .lang { display: flex; font: 700 13px "Barlow Condensed", sans-serif; letter-spacing: .08em; }
+  .lang button { border: 0; background: none; color: var(--dim); padding: 4px 6px; cursor: pointer; font: inherit; }
+  .lang button.on { color: #fff; box-shadow: inset 0 -2px 0 var(--accent); }
+
+  /* buttons: sharp, uppercase, chevron */
+  .btn { display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 24px; border: 2px solid var(--text);
+    font: 700 16px "Barlow Condensed", sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--text);
+    background: transparent; cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+  .btn:hover { background: var(--text); color: #000; }
+  .btn.solid { background: var(--accent); border-color: var(--accent); color: #0b0716; }
+  .btn.solid:hover { background: #b59cff; border-color: #b59cff; }
+  .btn.sm { height: 36px; padding: 0 16px; font-size: 14px; border-width: 1.5px; }
+  .btn svg { width: 16px; height: 16px; }
+  .more { display: inline-flex; align-items: center; gap: 6px; font: 700 15px "Barlow Condensed", sans-serif;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+  .more svg { width: 14px; height: 14px; transition: transform .15s; }
+  .more:hover svg { transform: translateX(3px); }
+
+  /* hero: full-bleed video */
+  .hero { position: relative; min-height: min(92vh, 900px); display: flex; align-items: flex-end; padding: 120px 0 72px;
+    overflow: hidden; }
+  .hero video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; }
+  .hero::after { content: ""; position: absolute; inset: 0; z-index: -1;
+    background: linear-gradient(90deg, rgba(0, 0, 0, .92) 0%, rgba(0, 0, 0, .7) 38%, rgba(0, 0, 0, .1) 75%),
+                linear-gradient(0deg, #000 0%, rgba(0, 0, 0, 0) 35%); }
+  .eyebrow { font: 700 14px "Barlow Condensed", sans-serif; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); }
+  .hero h1 { font: 800 clamp(48px, 8.2vw, 104px)/.92 "Barlow Condensed", sans-serif; text-transform: uppercase;
+    letter-spacing: -.005em; margin-top: 14px; max-width: 820px; }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero .lead { font-size: clamp(17px, 1.6vw, 20px); color: #d4d4db; max-width: 560px; margin-top: 22px; }
+  .hero .cta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 34px; }
+  .hero .meta { display: flex; gap: 28px; flex-wrap: wrap; margin-top: 30px; color: var(--muted); font-size: 14.5px; }
+  .hero .meta b { color: #fff; font-weight: 600; }
+  .live { position: absolute; right: 24px; bottom: 28px; font: 700 13px "Barlow Condensed", sans-serif; letter-spacing: .14em;
+    text-transform: uppercase; color: #fff; background: rgba(0, 0, 0, .6); padding: 8px 12px; border-left: 3px solid var(--accent); }
+
+  /* sections */
+  section { padding: 110px 0; border-top: 1px solid #141418; }
+  section.band { background: var(--band); }
+  h2 { font: 800 clamp(36px, 5vw, 60px)/1 "Barlow Condensed", sans-serif; text-transform: uppercase; margin-top: 12px; max-width: 900px; }
+  .sub { color: var(--muted); font-size: 18.5px; max-width: 700px; margin-top: 18px; }
+  .head-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
+
+  /* drag comparison */
+  .compare { position: relative; aspect-ratio: 16 / 9; margin-top: 48px; background: #000; overflow: hidden; user-select: none;
+    touch-action: pan-y; cursor: ew-resize; border: 1px solid var(--line); }
+  .compare video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+  .compare #c30 { clip-path: inset(0 calc(100% - var(--pos, 50%)) 0 0); }
+  .compare .bar { position: absolute; top: 0; bottom: 0; left: var(--pos, 50%); width: 2px; margin-left: -1px; background: #fff;
+    box-shadow: 0 0 12px rgba(0, 0, 0, .6); }
+  .compare .knob { position: absolute; top: 50%; left: var(--pos, 50%); width: 52px; height: 52px; margin: -26px 0 0 -26px;
+    background: #fff; color: #000; display: grid; place-items: center; box-shadow: 0 4px 20px rgba(0, 0, 0, .5); }
+  .compare .knob svg { width: 26px; height: 26px; }
+  .compare .lbl { position: absolute; top: 18px; padding: 8px 14px; font: 700 16px "Barlow Condensed", sans-serif;
+    letter-spacing: .1em; text-transform: uppercase; background: rgba(0, 0, 0, .72); }
+  .compare .lbl.l { left: 18px; border-left: 3px solid #8a8a94; }
+  .compare .lbl.r { right: 18px; border-right: 3px solid var(--accent); text-align: right; }
+  .compare .lbl small { display: block; font: 600 12px Barlow, sans-serif; letter-spacing: .04em; color: var(--muted); text-transform: none; }
+  .under { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 16px; color: var(--dim); font-size: 14.5px; }
+  #hz.ok { color: #57e3a0; } #hz.low { color: #ffc35a; }
+
+  /* tabs (more comparisons) */
+  .tabs { display: flex; border-bottom: 1px solid var(--line); margin-top: 56px; overflow-x: auto; }
+  .tabs button { border: 0; background: none; color: var(--muted); padding: 14px 22px; cursor: pointer; white-space: nowrap;
+    font: 700 16px "Barlow Condensed", sans-serif; letter-spacing: .08em; text-transform: uppercase; box-shadow: inset 0 -3px 0 transparent; }
+  .tabs button.on { color: #fff; box-shadow: inset 0 -3px 0 var(--accent); }
+  .tabframe { margin-top: 0; border: 1px solid var(--line); border-top: 0; background: #000; }
+  .tabframe video { width: 100%; }
+  .cap { color: var(--dim); font-size: 14.5px; margin-top: 14px; }
+
+  /* fps bars */
+  .chart { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 52px; }
+  .panel { background: var(--card); border: 1px solid var(--line); padding: 30px 30px 26px; }
+  .panel h3 { font: 700 20px "Barlow Condensed", sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+  .panel .note { color: var(--dim); font-size: 14px; margin-top: 4px; }
+  .rows { margin-top: 26px; display: grid; gap: 16px; }
+  .row .top { display: flex; justify-content: space-between; font-size: 14.5px; color: #cfcfd6; margin-bottom: 7px; }
+  .row .top b { font: 700 20px "Barlow Condensed", sans-serif; color: #fff; letter-spacing: .02em; }
+  .track { height: 30px; background: #222227; position: relative; overflow: hidden; }
+  .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: #5c5c66; transition: width 1.1s cubic-bezier(.2, .8, .2, 1); }
+  .fill.ai { background: linear-gradient(90deg, var(--accentDark), var(--accent)); }
+  .fill.ai.top { background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+  .row .x { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font: 700 15px "Barlow Condensed", sans-serif;
+    letter-spacing: .06em; color: #0b0716; opacity: 0; transition: opacity .4s 1s; }
+  .chart.on .row .x { opacity: 1; }
+  .specs { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 28px; border: 1px solid var(--line); }
+  .spec { padding: 24px 26px; border-left: 1px solid var(--line); background: var(--card); }
+  .spec:first-child { border-left: 0; }
+  .spec .n { font: 800 44px/1 "Barlow Condensed", sans-serif; }
+  .spec .n span { color: var(--accent); }
+  .spec .l { color: var(--muted); font-size: 14.5px; margin-top: 8px; }
+
+  /* strip */
+  .strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 48px; }
+  .shot { position: relative; background: #000; }
+  .shot img { aspect-ratio: 16 / 9; object-fit: cover; width: 100%; }
+  .shot .tag { position: absolute; left: 0; bottom: 0; right: 0; padding: 10px 14px; display: flex; justify-content: space-between;
+    background: linear-gradient(0deg, rgba(0, 0, 0, .85), transparent); font: 700 14px "Barlow Condensed", sans-serif;
+    letter-spacing: .1em; text-transform: uppercase; }
+  .shot .tag span:last-child { color: var(--dim); }
+  .shot.ai { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .shot.ai .tag span:first-child { color: var(--accent); }
+
+  /* features */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; margin-top: 52px; background: var(--line); border: 1px solid var(--line); }
+  .feat { background: var(--black); padding: 34px 30px 36px; position: relative; transition: background .2s; }
+  .band .feat { background: var(--band); }
+  .feat:hover { background: var(--card); }
+  .feat::before { content: ""; position: absolute; left: 0; top: 0; width: 0; height: 3px; background: var(--accent); transition: width .25s; }
+  .feat:hover::before { width: 100%; }
+  .feat svg { width: 34px; height: 34px; color: var(--accent); }
+  .feat h3 { font: 700 23px "Barlow Condensed", sans-serif; letter-spacing: .03em; text-transform: uppercase; margin-top: 20px; }
+  .feat p { color: var(--muted); font-size: 16px; margin-top: 8px; }
+
+  /* pipeline */
+  .pipe { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 52px; border-top: 3px solid var(--line2); }
+  .stage-n { padding: 26px 26px 0 0; position: relative; }
+  .stage-n::before { content: ""; position: absolute; top: -9px; left: 0; width: 15px; height: 15px; background: var(--black);
+    border: 3px solid var(--line2); }
+  .stage-n.gpu::before { background: var(--accent); border-color: var(--accent); }
+  .stage-n .k { font: 700 14px "Barlow Condensed", sans-serif; letter-spacing: .14em; color: var(--dim); }
+  .stage-n.gpu .k { color: var(--accent); }
+  .stage-n h4 { font: 700 26px "Barlow Condensed", sans-serif; text-transform: uppercase; margin-top: 6px; }
+  .stage-n p, .stage-n li { color: var(--muted); font-size: 15.5px; }
+  .stage-n ol { padding-left: 18px; margin-top: 6px; }
+
+  /* table */
+  table { width: 100%; border-collapse: collapse; margin-top: 40px; font-size: 16px; }
+  th, td { padding: 16px 18px; text-align: left; border-bottom: 1px solid var(--line); }
+  th { font: 700 14px "Barlow Condensed", sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+    border-bottom: 2px solid var(--line2); }
+  td.up { color: var(--accent); font-weight: 700; }
+
+  /* download */
+  .dl { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 52px; }
+  .dcard { background: var(--card); border: 1px solid var(--line); padding: 36px; display: flex; flex-direction: column; }
+  .dcard.rec { border-top: 4px solid var(--accent); }
+  .dcard .flag { font: 700 13px "Barlow Condensed", sans-serif; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
+  .dcard .flag.alt { color: var(--dim); }
+  .dcard h3 { font: 800 40px/1 "Barlow Condensed", sans-serif; text-transform: uppercase; margin-top: 10px; }
+  .dcard ul { list-style: none; padding: 0; margin: 22px 0 30px; display: grid; gap: 10px; color: #c9c9d1; font-size: 16px; }
+  .dcard li { display: flex; gap: 12px; }
+  .dcard li::before { content: ""; flex: none; width: 8px; height: 8px; margin-top: 9px; background: var(--accent); }
+  .dcard .acts { margin-top: auto; display: flex; gap: 12px; flex-wrap: wrap; }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 56px; counter-reset: s; }
+  .step { border-top: 1px solid var(--line2); padding-top: 22px; }
+  .step::before { counter-increment: s; content: "0" counter(s); font: 800 40px/1 "Barlow Condensed", sans-serif; color: var(--accent); }
+  .step h3 { font: 700 23px "Barlow Condensed", sans-serif; text-transform: uppercase; margin-top: 12px; }
+  .step p { color: var(--muted); font-size: 16px; margin-top: 6px; }
+  .keys { display: flex; flex-wrap: wrap; gap: 12px 26px; margin-top: 36px; color: var(--muted); font-size: 15px; }
+  kbd { font: 700 13px "Barlow Condensed", sans-serif; letter-spacing: .06em; padding: 3px 8px; border: 1px solid var(--line2);
+    background: var(--card2); color: #fff; }
+
+  /* faq */
+  .faq { margin-top: 44px; border-top: 2px solid var(--line2); }
+  details { border-bottom: 1px solid var(--line); }
+  summary { cursor: pointer; list-style: none; padding: 24px 0; font: 700 22px "Barlow Condensed", sans-serif; letter-spacing: .02em;
+    text-transform: uppercase; display: flex; justify-content: space-between; gap: 24px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: ""; flex: none; width: 14px; height: 14px; margin-top: 6px; border-right: 2.5px solid var(--accent);
+    border-bottom: 2.5px solid var(--accent); transform: rotate(45deg); transition: transform .2s; }
+  details[open] summary::after { transform: rotate(-135deg); margin-top: 12px; }
+  details p { color: var(--muted); padding: 0 0 26px; max-width: 860px; font-size: 17px; }
+
+  /* closing band + footer */
+  .closing { position: relative; padding: 120px 0; overflow: hidden; border-top: 1px solid #141418; }
+  .closing img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; filter: saturate(.9); }
+  .closing::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, #000 20%, rgba(0, 0, 0, .55)); }
+  .closing h2 { max-width: 720px; }
+  .closing .cta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 34px; }
+  footer { border-top: 1px solid #1d1d22; padding: 40px 0 56px; color: var(--dim); font-size: 14px; }
+  footer .wrap { display: grid; grid-template-columns: auto 1fr; gap: 20px 60px; }
+  footer .brand { font-size: 17px; color: #fff; }
+  footer nav, footer .fl { display: flex; gap: 22px; flex-wrap: wrap; position: static; height: auto; background: none; border: 0; backdrop-filter: none; }
+  footer a:hover { color: #fff; }
+  footer .legal { grid-column: 1 / -1; max-width: 900px; line-height: 1.6; border-top: 1px solid #1d1d22; padding-top: 20px; }
+
+  /* ---- DLSS-page style: centered sentence-case headings, flat buttons, FPS badges, blurred game backdrops */
+  h1, h2, .feat h3, .step h3, .dcard h3, .stage-n h4, summary, .panel h3 { text-transform: none; letter-spacing: -.01em;
+    font-family: Barlow, sans-serif; }
+  .hero h1 { font: 700 clamp(44px, 6.6vw, 84px)/1.02 Barlow, sans-serif; text-transform: none; letter-spacing: -.02em;
+    margin-left: auto; margin-right: auto; }
+  h2 { font-weight: 700; font-size: clamp(32px, 4.2vw, 50px); line-height: 1.1; margin-left: auto; margin-right: auto; }
+  .eyebrow { letter-spacing: .14em; }
+  section > .wrap > .eyebrow, section > .wrap > h2, section > .wrap > .sub { text-align: center; margin-left: auto; margin-right: auto; }
+  .head-row { display: block; text-align: center; }
+  .head-row .sub { margin: 18px auto 0; }
+  .hero { align-items: center; text-align: center; padding: 140px 0 96px; }
+  .hero::after { background: radial-gradient(ellipse at center, rgba(0, 0, 0, .78) 0%, rgba(0, 0, 0, .55) 55%, rgba(0, 0, 0, .35) 100%),
+    linear-gradient(0deg, #000 0%, rgba(0, 0, 0, 0) 30%); }
+  .hero .lead { margin-left: auto; margin-right: auto; }
+  .hero .cta, .hero .meta { justify-content: center; }
+  .btn { border-radius: 2px; text-transform: none; letter-spacing: 0; font: 700 16px Barlow, sans-serif; border-width: 2px; }
+  .btn.sm { font-size: 14.5px; }
+  .more { text-transform: none; letter-spacing: 0; font-family: Barlow, sans-serif; }
+  .feat h3 { font-size: 21px; font-weight: 700; }
+  .step h3 { font-size: 21px; font-weight: 700; }
+  .dcard h3 { font-size: 34px; font-weight: 700; }
+  .stage-n h4 { font-size: 22px; font-weight: 700; }
+  summary { font-size: 19px; font-weight: 600; }
+  .panel h3 { font-size: 20px; font-weight: 700; }
+  .tabs { justify-content: center; }
+  .tabs button { text-transform: none; letter-spacing: 0; font: 600 16px Barlow, sans-serif; }
+
+  .compare .bar { width: 3px; margin-left: -1.5px; background: var(--accent); box-shadow: 0 0 18px rgba(157, 123, 255, .7); }
+  .compare .knob { border-radius: 50%; background: var(--accent); color: #0b0716; }
+  .compare .lbl { display: none; }
+  .fpsb { position: absolute; top: 50%; transform: translateY(-50%); width: 132px; background: rgba(10, 10, 12, .88);
+    text-align: center; pointer-events: none; }
+  .fpsb.l { left: 5%; } .fpsb.r { right: 5%; }
+  .fpsb .num { font: 700 60px/1 Barlow, sans-serif; padding-top: 14px; }
+  .fpsb .unit { font: 700 17px Barlow, sans-serif; letter-spacing: .06em; padding-bottom: 12px; }
+  .fpsb .name { font: 700 13px Barlow, sans-serif; padding: 7px 6px; background: #2a2a30; color: #e7e7ec; }
+  .fpsb.r .num, .fpsb.r .unit { color: var(--accent); }
+  .fpsb.r .name { background: var(--accent); color: #0b0716; }
+
+  .hero, .closing, section.art { isolation: isolate; }
+  section.art { position: relative; overflow: hidden; }
+  section.art .grid { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .1); }
+  section.art .feat { background: rgba(6, 6, 9, .78); backdrop-filter: blur(6px); }
+  section.art .feat:hover { background: rgba(22, 22, 28, .86); }
+  section.art > .bgimg { position: absolute; inset: -40px; z-index: -1; background-size: cover; background-position: center;
+    filter: blur(28px) saturate(1.1) brightness(.32); transform: scale(1.08); }
+  section.art::before { content: ""; position: absolute; inset: 0; z-index: -1;
+    background: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, .35) 18%, rgba(0, 0, 0, .35) 82%, #000 100%); }
+
+  @media (max-width: 640px) {
+    .fpsb { width: 84px; } .fpsb .num { font-size: 34px; padding-top: 8px; } .fpsb .unit { font-size: 12px; padding-bottom: 6px; }
+    .fpsb .name { font-size: 10.5px; padding: 4px; }
+    .tabs { justify-content: flex-start; }
   }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
-  header { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
-  header img { width: 56px; height: 56px; }
-  h1 { font-size: clamp(28px, 5vw, 44px); margin: 0; letter-spacing: -0.02em; }
-  .tag { color: var(--muted); font-size: 18px; margin: 4px 0 24px; max-width: 760px; }
-  .tag b { color: var(--text); }
-  .btns { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 40px; }
-  .btn { display: inline-block; padding: 11px 20px; border-radius: 10px; text-decoration: none; font-weight: 600;
-    border: 1px solid var(--line); color: var(--text); background: var(--panel); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  h2 { font-size: 24px; margin: 48px 0 8px; }
-  p.note { color: var(--muted); margin: 0 0 14px; }
-  video, .strip { width: 100%; border-radius: 12px; border: 1px solid var(--line); background: #000; display: block; }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 8px; }
-  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
-  .stat .big { font-size: 30px; font-weight: 700; color: var(--accent); }
-  .stat .lbl { color: var(--muted); font-size: 14px; }
-  ol { padding-left: 20px; }
-  ol li { margin: 6px 0; }
-  code { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: 14px; }
-  .flow { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px;
-    overflow-x: auto; font: 14px/1.5 ui-monospace, Consolas, monospace; white-space: pre; color: var(--muted); }
-  footer { margin-top: 56px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
-  footer a, main a:not(.btn) { color: var(--accent2); }
-  .player { position: relative; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: #000;
-    aspect-ratio: 16 / 9; }
-  .player video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; }
-  .player video.hidden { visibility: hidden; }
-  .switch { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 4px;
-    background: rgba(10, 12, 24, .72); padding: 4px; border-radius: 999px; backdrop-filter: blur(6px); }
-  .switch button { border: 0; border-radius: 999px; padding: 9px 16px; font: 600 15px system-ui, sans-serif;
-    color: #cfd3ea; background: transparent; cursor: pointer; white-space: nowrap; }
-  .switch button.on { background: var(--accent); color: #fff; }
-  @media (max-width: 560px) { .switch button { padding: 7px 10px; font-size: 13px; } }
-  #hz.ok { color: #6fdc8c; } #hz.low { color: #ffb86b; }
+
+  @media (max-width: 980px) {
+    .links { display: none; }
+    .chart, .dl { grid-template-columns: 1fr; }
+    .grid { grid-template-columns: 1fr 1fr; }
+    .specs { grid-template-columns: 1fr 1fr; }
+    .spec:nth-child(3) { border-left: 0; }
+    .spec:nth-child(n+3) { border-top: 1px solid var(--line); }
+    .strip { grid-template-columns: 1fr 1fr; }
+    .pipe { grid-template-columns: 1fr 1fr; row-gap: 34px; }
+  }
+  @media (max-width: 640px) {
+    body { font-size: 16px; }
+    .navr .btn { display: none; }
+    section { padding: 76px 0; }
+    .hero { min-height: 88vh; padding-bottom: 48px; }
+    .live { display: none; }
+    .grid, .steps, .pipe { grid-template-columns: 1fr; }
+    .compare .lbl { font-size: 13px; padding: 6px 9px; top: 10px; }
+    .compare .lbl.l { left: 10px; } .compare .lbl.r { right: 10px; }
+    .compare .lbl small { display: none; }
+    .compare .knob { width: 40px; height: 40px; margin: -20px 0 0 -20px; }
+    .panel, .dcard { padding: 24px; }
+    th, td { padding: 12px 10px; font-size: 14.5px; }
+    footer .wrap { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <img src="media/icon.png" alt="">
-    <h1>Capture Smooth</h1>
-  </header>
-  <p class="tag">Free, open-source <b>AI frame generation for a capture card feed</b>. Plug your console into a capture card: Capture Smooth adds AI frames between the real ones on your PC's graphics card. <b>A 30 fps game is shown at 60 or 90 fps</b>, and a 60 fps game at 120 fps, with low added latency.</p>
-  <div class="btns">
-    <a class="btn primary" href="https://github.com/d3Ita/capture-smooth/releases/latest">Download for Windows</a>
-    <a class="btn" href="https://github.com/d3Ita/capture-smooth">Source code</a>
-  </div>
 
-  <h2>30 fps or 90 fps: switch and compare</h2>
-  <p class="note">The same scene, full frame. Switch while it plays (or press <code>Tab</code>) and watch the camera turn. The 90 fps version needs a screen of 90 Hz or more: <span id="hz">checking your screen…</span></p>
-  <div class="player">
-    <video id="v30" src="media/full_30fps.mp4" poster="media/full_poster.jpg" muted loop playsinline preload="auto"></video>
-    <video id="v90" src="media/full_90fps.mp4" poster="media/full_poster.jpg" muted loop playsinline preload="auto"></video>
-    <div class="switch" role="tablist">
-      <button id="b30" role="tab">Original · 30 fps</button>
-      <button id="b90" role="tab" class="on">Capture Smooth · 90 fps</button>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square"><path d="M12 3v13m-6-6 6 6 6-6M4 21h16"/></symbol>
+  <symbol id="i-drag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square"><path d="M9 6l-6 6 6 6M15 6l6 6-6 6"/></symbol>
+  <symbol id="i-gh" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="miter"><path d="M12 2l2.2 6.3L20.5 10.5 14.2 12.7 12 19l-2.2-6.3L3.5 10.5l6.3-2.2z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="13" height="13"/><path d="M16 8V3H3v13h5"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="miter"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="5" width="14" height="14"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v4m6-4v4M9 19v4m6-4v4M1 9h4m-4 6h4m14-6h4m-4 6h4"/></symbol>
+  <symbol id="i-sound" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="miter"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M1 14h6m2-6h6m2 8h6"/></symbol>
+</svg>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="media/icon.png" alt="">Capture Smooth</a>
+    <div class="links">
+      <a href="#compare" data-i18n="nav.demo">Compare</a>
+      <a href="#perf" data-i18n="nav.perf">Performance</a>
+      <a href="#features" data-i18n="nav.features">Features</a>
+      <a href="#how" data-i18n="nav.how">How it works</a>
+      <a href="#faq">FAQ</a>
+    </div>
+    <div class="navr">
+      <div class="lang" role="group" aria-label="Language"><button data-lang="en">EN</button><button data-lang="fr">FR</button></div>
+      <a class="btn sm" href="https://github.com/d3Ita/capture-smooth"><svg><use href="#i-gh"/></svg>GitHub</a>
+      <a class="btn sm solid" href="#download" data-i18n="nav.download">Download</a>
     </div>
   </div>
+</nav>
 
-  <h2>Split screen, 90 fps</h2>
-  <p class="note">One picture: the left half is what the console sends, the right half is Capture Smooth. Look at the edges and the divider when the camera moves.</p>
-  <video class="auto" src="media/split_90fps.mp4" poster="media/split_90fps_poster.jpg" muted loop playsinline controls preload="none"></video>
+<main id="top">
+  <header class="hero">
+    <video id="heroVideo" src="media/full_90fps.mp4" poster="media/full_poster.jpg" muted loop playsinline autoplay></video>
+    <div class="wrap">
+      <div class="eyebrow" data-i18n="hero.eyebrow">AI frame generation for capture cards</div>
+      <h1 data-i18n="hero.title">30 fps in.<br><em>90 fps</em> out.</h1>
+      <p class="lead" data-i18n="hero.lead">Capture Smooth reads your capture card and generates new frames between the real ones on your PC's graphics card. Any console, any game, no mod.</p>
+      <div class="cta">
+        <a class="btn solid" href="#download"><svg><use href="#i-down"/></svg><span data-i18n="hero.dl">Download free</span></a>
+        <a class="btn" href="#compare"><span data-i18n="hero.see">See the difference</span><svg><use href="#i-chev"/></svg></a>
+      </div>
+      <div class="meta">
+        <span data-i18n="hero.m1"><b>Free</b> &amp; open source (MIT)</span>
+        <span data-i18n="hero.m2"><b>NVIDIA</b>, AMD &amp; Intel GPUs</span>
+        <span data-i18n="hero.m3"><b>PS5</b>, Xbox, Switch</span>
+      </div>
+    </div>
+    <div class="live" data-i18n="hero.live">Capture Smooth · 90 fps · real gameplay</div>
+  </header>
 
-  <h2>Side by side, 60 fps</h2>
-  <p class="note">For 60 Hz screens: left 30 fps, right Capture Smooth at x2 (60 fps).</p>
-  <video class="auto" src="media/compare_60fps.mp4" poster="media/compare_60fps_poster.jpg" muted loop playsinline controls preload="none"></video>
+  <section id="compare" class="art">
+    <div class="bgimg" style="background-image:url(media/strip_0.jpg)"></div>
+    <div class="wrap">
+      <div class="head-row">
+        <div>
+          <div class="eyebrow" data-i18n="cmp.k">Compare</div>
+          <h2 data-i18n="cmp.h">Drag to see the difference</h2>
+        </div>
+        <p class="sub" style="max-width:460px" data-i18n="cmp.sub">Same gameplay, same moment. Left: what the console sends. Right: Capture Smooth. Look at the scenery when the camera turns.</p>
+      </div>
+      <div class="compare" id="cmpBox" style="--pos:50%">
+        <video id="c90" src="media/full_90fps.mp4" poster="media/full_poster.jpg" muted loop playsinline preload="auto"></video>
+        <video id="c30" src="media/full_30fps.mp4" poster="media/full_poster.jpg" muted loop playsinline preload="auto"></video>
+        <div class="lbl l"><span data-i18n="cmp.l">Console · 30 fps</span><small data-i18n="cmp.ls">Original signal</small></div>
+        <div class="lbl r">Capture Smooth · 90 fps<small data-i18n="cmp.rs">×3 with AI frames</small></div>
+        <div class="bar"></div>
+        <div class="fpsb l"><div class="num">30</div><div class="unit">FPS</div><div class="name" data-i18n="cmp.bl">Console</div></div>
+        <div class="fpsb r"><div class="num">90</div><div class="unit">FPS</div><div class="name">Capture Smooth ×3</div></div>
+        <div class="knob" aria-hidden="true"><svg><use href="#i-drag"/></svg></div>
+      </div>
+      <div class="under">
+        <span data-i18n="cmp.hint">Drag the handle, or use the ← → keys.</span>
+        <span id="hz" data-i18n="cmp.checking">Checking your screen…</span>
+      </div>
 
-  <h2>Slow motion (1/4 speed)</h2>
-  <p class="note">Slowed down, the difference is visible on any screen: the original repeats each game frame, Capture Smooth fills the gap with AI frames.</p>
-  <video class="auto" src="media/compare_slowmo.mp4" poster="media/compare_slowmo_poster.jpg" muted loop playsinline controls preload="none"></video>
+      <div class="tabs" id="tabs">
+        <button class="on" data-src="media/split_90fps.mp4" data-poster="media/split_90fps_poster.jpg" data-cap="cap.split" data-i18n="tab.split">Split screen · 90 fps</button>
+        <button data-src="media/compare_60fps.mp4" data-poster="media/compare_60fps_poster.jpg" data-cap="cap.side" data-i18n="tab.side">Side by side · 60 fps</button>
+        <button data-src="media/compare_slowmo.mp4" data-poster="media/compare_slowmo_poster.jpg" data-cap="cap.slow" data-i18n="tab.slow">Slow motion ×4</button>
+      </div>
+      <div class="tabframe"><video id="tabVideo" src="media/split_90fps.mp4" poster="media/split_90fps_poster.jpg" muted loop playsinline controls preload="none"></video></div>
+      <p class="cap" id="tabCap" data-i18n="cap.split">Left half: what the console sends. Right half: Capture Smooth, on the same picture.</p>
+    </div>
+  </section>
 
-  <h2>What the AI adds</h2>
-  <p class="note">Two consecutive real frames from the game, and the two frames Capture Smooth generates between them at x3.</p>
-  <img class="strip" src="media/frames.jpg" alt="Real frame, two AI-generated frames, next real frame">
+  <section id="perf" class="band">
+    <div class="wrap">
+      <div class="eyebrow" data-i18n="perf.k">Performance</div>
+      <h2 data-i18n="perf.h">Up to 3× the frame rate</h2>
+      <p class="sub" data-i18n="perf.sub">Measured on an RTX 4070 SUPER with the console in 4K, captured at 1440p.</p>
+      <div class="chart" id="chart">
+        <div class="panel">
+          <h3 data-i18n="ch.30">30 fps game</h3>
+          <div class="note" data-i18n="ch.30n">Most console games in quality mode</div>
+          <div class="rows">
+            <div class="row"><div class="top"><span data-i18n="ch.orig">Console (original)</span><b>30 FPS</b></div><div class="track"><div class="fill" data-w="25"></div></div></div>
+            <div class="row"><div class="top"><span>Capture Smooth ×2</span><b>60 FPS</b></div><div class="track"><div class="fill ai" data-w="50"></div><span class="x">2×</span></div></div>
+            <div class="row"><div class="top"><span>Capture Smooth ×3</span><b>90 FPS</b></div><div class="track"><div class="fill ai top" data-w="75"></div><span class="x">3×</span></div></div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3 data-i18n="ch.60">60 fps game</h3>
+          <div class="note" data-i18n="ch.60n">Performance modes, sports and racing games</div>
+          <div class="rows">
+            <div class="row"><div class="top"><span data-i18n="ch.orig">Console (original)</span><b>60 FPS</b></div><div class="track"><div class="fill" data-w="50"></div></div></div>
+            <div class="row"><div class="top"><span>Capture Smooth ×2</span><b>120 FPS</b></div><div class="track"><div class="fill ai top" data-w="100"></div><span class="x">2×</span></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="specs">
+        <div class="spec"><div class="n">~32<span> ms</span></div><div class="l" data-i18n="sp.1">added latency, 30 → 90 fps</div></div>
+        <div class="spec"><div class="n">~19<span> ms</span></div><div class="l" data-i18n="sp.2">added latency, 60 → 120 fps</div></div>
+        <div class="spec"><div class="n">7<span> ms</span></div><div class="l" data-i18n="sp.3">per AI frame at 1440p (CUDA)</div></div>
+        <div class="spec"><div class="n">0<span> €</span></div><div class="l" data-i18n="sp.4">free, no account, no ads</div></div>
+      </div>
+      <table>
+        <thead><tr><th data-i18n="t.game">Game</th><th data-i18n="t.mode">Mode</th><th data-i18n="t.shown">Displayed</th><th data-i18n="t.ai">AI per frame</th><th data-i18n="t.lat">Added latency</th></tr></thead>
+        <tbody>
+          <tr><td>30 fps</td><td>×3 · CUDA</td><td class="up">90 fps</td><td>7 ms</td><td>~32 ms</td></tr>
+          <tr><td>30 fps</td><td>×2 · CUDA</td><td class="up">60 fps</td><td>7 ms</td><td>~26 ms</td></tr>
+          <tr><td>60 fps</td><td>×2 · CUDA</td><td class="up">120 fps</td><td>8 ms</td><td>~19 ms</td></tr>
+          <tr><td>30 fps</td><td>×3 · DirectML</td><td class="up">90 fps</td><td>15 ms</td><td>~45 ms</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
 
-  <h2>Measured</h2>
-  <p class="note">RTX 4070 SUPER, console output in 4K, captured at 1440p.</p>
-  <div class="stats">
-    <div class="stat"><div class="big">30 → 90 fps</div><div class="lbl">x3, about 32 ms added latency (CUDA)</div></div>
-    <div class="stat"><div class="big">30 → 60 fps</div><div class="lbl">x2, about 26 ms added latency</div></div>
-    <div class="stat"><div class="big">60 → 120 fps</div><div class="lbl">x2, about 19 ms added latency</div></div>
-    <div class="stat"><div class="big">7 ms</div><div class="lbl">per AI frame at 1440p (CUDA). About 15 ms with DirectML on any GPU</div></div>
+  <section>
+    <div class="wrap">
+      <div class="eyebrow" data-i18n="ai.k">Under the hood</div>
+      <h2 data-i18n="ai.h">Two AI frames between every real one</h2>
+      <p class="sub" data-i18n="ai.sub">The network estimates how every pixel moves between two game frames, then draws the frames in between. Every 33 ms, three frames instead of one.</p>
+      <div class="strip">
+        <div class="shot"><img src="media/strip_0.jpg" alt="" loading="lazy"><div class="tag"><span data-i18n="ai.real">Real frame</span><span>0 ms</span></div></div>
+        <div class="shot ai"><img src="media/strip_1.jpg" alt="" loading="lazy"><div class="tag"><span data-i18n="ai.gen">AI frame</span><span>11 ms</span></div></div>
+        <div class="shot ai"><img src="media/strip_2.jpg" alt="" loading="lazy"><div class="tag"><span data-i18n="ai.gen">AI frame</span><span>22 ms</span></div></div>
+        <div class="shot"><img src="media/strip_3.jpg" alt="" loading="lazy"><div class="tag"><span data-i18n="ai.next">Next real frame</span><span>33 ms</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="features" class="art">
+    <div class="bgimg" style="background-image:url(media/strip_2.jpg)"></div>
+    <div class="wrap">
+      <div class="eyebrow" data-i18n="feat.k">Features</div>
+      <h2 data-i18n="feat.h">Built for gaming. Tuned for latency.</h2>
+      <div class="grid">
+        <div class="feat"><svg><use href="#i-spark"/></svg><h3 data-i18n="f1.h">AI frame generation</h3><p data-i18n="f1.p">RIFE 4.6, a state-of-the-art interpolation network. It needs nothing from the game, so it works on any video feed.</p></div>
+        <div class="feat"><svg><use href="#i-copy"/></svg><h3 data-i18n="f2.h">Duplicate detection</h3><p data-i18n="f2.p">A 30 fps game in a 60 Hz signal sends every frame twice. Copies are skipped, so AI frames only go between real ones.</p></div>
+        <div class="feat"><svg><use href="#i-zap"/></svg><h3 data-i18n="f3.h">Low latency</h3><p data-i18n="f3.p">Motion estimated at half resolution, the AI step recorded as one CUDA graph, frames paced evenly, late ones dropped.</p></div>
+        <div class="feat"><svg><use href="#i-cpu"/></svg><h3 data-i18n="f4.h">NVIDIA or any GPU</h3><p data-i18n="f4.p">A CUDA engine for GeForce cards, and a DirectML engine for any DirectX 12 card: AMD Radeon, Intel Arc, older NVIDIA.</p></div>
+        <div class="feat"><svg><use href="#i-sound"/></svg><h3 data-i18n="f5.h">Game sound included</h3><p data-i18n="f5.p">The capture card's audio plays on your speakers, with an optional delay to stay in sync with the picture.</p></div>
+        <div class="feat"><svg><use href="#i-sliders"/></svg><h3 data-i18n="f6.h">One-click setup</h3><p data-i18n="f6.p">Double-click, pick your console's output and the game's frame rate, press Start. Borderless full screen, fps counter on F1.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="eyebrow" data-i18n="how.k">How it works</div>
+      <h2 data-i18n="how.h">From your console to your screen</h2>
+      <div class="pipe">
+        <div class="stage-n"><div class="k">01</div><h4 data-i18n="how.1h">Console</h4><p data-i18n="how.1p">PS5, Xbox or Switch, any game. Nothing to install on it.</p></div>
+        <div class="stage-n"><div class="k">02</div><h4 data-i18n="how.2h">Capture card</h4><p data-i18n="how.2p">HDMI in, USB to the PC. 1080p or 1440p at 60 Hz.</p></div>
+        <div class="stage-n gpu"><div class="k">03 · GPU</div><h4>Capture Smooth</h4><ol><li data-i18n="how.3a">Skips duplicated frames</li><li data-i18n="how.3b">Estimates the motion (RIFE)</li><li data-i18n="how.3c">Draws 1 or 2 frames in between</li></ol></div>
+        <div class="stage-n"><div class="k">04</div><h4 data-i18n="how.4h">Your screen</h4><p data-i18n="how.4p">60, 90 or 120 fps, evenly paced, with sound.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="download" class="band">
+    <div class="wrap">
+      <div class="eyebrow" data-i18n="dl.k">Download</div>
+      <h2 data-i18n="dl.h">Get Capture Smooth</h2>
+      <p class="sub" data-i18n="dl.sub">Windows 10 or 11, a capture card and a graphics card. Unzip, double-click the exe, play.</p>
+      <div class="dl">
+        <div class="dcard rec">
+          <div class="flag" data-i18n="dl.rec">Recommended · fastest</div>
+          <h3>NVIDIA GeForce</h3>
+          <ul>
+            <li data-i18n="dl.n1">GTX 10 series or newer, recent driver</li>
+            <li data-i18n="dl.n2">CUDA engine: 7 ms per AI frame, ~32 ms at 90 fps</li>
+            <li data-i18n="dl.n3">2.8 GB in two parts: extract both into the same folder</li>
+          </ul>
+          <div class="acts">
+            <a class="btn solid" href="https://github.com/d3Ita/capture-smooth/releases/latest/download/CaptureSmooth-NVIDIA-part1of2.zip"><svg><use href="#i-down"/></svg><span data-i18n="dl.p1">Part 1</span> · 1.9 GB</a>
+            <a class="btn solid" href="https://github.com/d3Ita/capture-smooth/releases/latest/download/CaptureSmooth-NVIDIA-part2of2.zip"><svg><use href="#i-down"/></svg><span data-i18n="dl.p2">Part 2</span> · 0.9 GB</a>
+          </div>
+        </div>
+        <div class="dcard">
+          <div class="flag alt" data-i18n="dl.any">Any DirectX 12 GPU</div>
+          <h3>DirectML</h3>
+          <ul>
+            <li data-i18n="dl.d1">AMD Radeon, Intel Arc, NVIDIA</li>
+            <li data-i18n="dl.d2">Light: a single 114 MB download</li>
+            <li data-i18n="dl.d3">About twice slower than CUDA on NVIDIA cards</li>
+          </ul>
+          <div class="acts">
+            <a class="btn" href="https://github.com/d3Ita/capture-smooth/releases/latest/download/CaptureSmooth-DirectML.zip"><svg><use href="#i-down"/></svg><span data-i18n="dl.dd">Download</span> · 114 MB</a>
+          </div>
+        </div>
+      </div>
+      <div class="steps">
+        <div class="step"><h3 data-i18n="s1.h">Close OBS</h3><p data-i18n="s1.p">OBS and your capture card's software lock the device. Close them before starting.</p></div>
+        <div class="step"><h3 data-i18n="s2.h">Pick your settings</h3><p data-i18n="s2.p">Double-click the exe. Choose the resolution your console really outputs and your game's frame rate.</p></div>
+        <div class="step"><h3 data-i18n="s3.h">Play</h3><p data-i18n="s3.p">Press Start. Esc quits, Space turns the AI on and off so you can compare.</p></div>
+      </div>
+      <div class="keys">
+        <span><kbd>ESC</kbd> <span data-i18n="k.esc">quit</span></span>
+        <span><kbd>SPACE</kbd> <span data-i18n="k.space">AI on / off</span></span>
+        <span><kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <span data-i18n="k.mult">multiplier</span></span>
+        <span><kbd>F1</kbd> <span data-i18n="k.f1">fps counter</span></span>
+        <span><kbd>M</kbd> <span data-i18n="k.m">sound</span></span>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <div class="eyebrow">FAQ</div>
+      <h2 data-i18n="faq.h">Questions</h2>
+      <div class="faq">
+        <details><summary data-i18n="q1">Is this like DLSS 3 frame generation?</summary><p data-i18n="a1">Same idea, different source. DLSS 3 uses motion data from the game engine; Capture Smooth only sees the video, so it estimates the motion itself with RIFE. That is what lets it work with a console, which no PC tool can patch.</p></details>
+        <details><summary data-i18n="q2">Does it add input lag?</summary><p data-i18n="a2">A little: about 32 ms at 90 fps and 19 ms for a 60 fps game shown at 120 fps. An in-between frame needs the next real frame, so some delay is unavoidable. For competitive shooters, use ×2 or turn the AI off with Space.</p></details>
+        <details><summary data-i18n="q3">Which capture cards work?</summary><p data-i18n="a3">Any card Windows sees as a camera (USB video class or DirectShow): Elgato HD60 X, 4K X, Cam Link, AVerMedia Live Gamer, and most generic HDMI-to-USB cards. It was developed on an Elgato HD60 X.</p></details>
+        <details><summary data-i18n="q4">My console refuses 1440p. What can I do?</summary><p data-i18n="a4">The console only offers resolutions supported by the screen plugged into the card's HDMI passthrough. In your capture card's software, set the EDID to "internal", unplug and plug the console again, and 1440p (or 4K) appears. A 4K output works too: the card downscales it.</p></details>
+        <details><summary data-i18n="q5">Why do I get a black screen or "invalid resolution"?</summary><p data-i18n="a5">Capture cards cannot upscale. If you choose 1440p while the console sends 1080p, the card shows an error picture. Pick the resolution the console really outputs.</p></details>
+        <details><summary data-i18n="q6">Is it really free?</summary><p data-i18n="a6">Yes. The code is MIT licensed, the AI model (RIFE) is MIT licensed, and there is nothing to buy or sign up for.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <div class="closing">
+    <img src="media/strip_3.jpg" alt="" loading="lazy">
+    <div class="wrap">
+      <div class="eyebrow" data-i18n="final.k">Free download</div>
+      <h2 data-i18n="final.h">Give your console games the frame rate they deserve</h2>
+      <div class="cta">
+        <a class="btn solid" href="#download"><svg><use href="#i-down"/></svg><span data-i18n="hero.dl">Download free</span></a>
+        <a class="btn" href="https://github.com/d3Ita/capture-smooth"><svg><use href="#i-gh"/></svg><span data-i18n="final.src">Source code</span></a>
+      </div>
+    </div>
   </div>
-
-  <h2>How it works</h2>
-  <div class="flow">console ──HDMI──▶ capture card ──USB──▶ PC
-   capture ▶ skip duplicated frames ▶ RIFE 4.6 on the GPU ▶ evenly paced display
-                                       └ sound passthrough ▶ speakers</div>
-  <ol>
-    <li><b>Duplicates removed.</b> A 30 fps game in a 60 Hz signal sends every frame twice. Copies are detected and skipped, so AI frames are only made between real game frames.</li>
-    <li><b>RIFE 4.6</b> estimates the motion between two frames and builds the in-between ones. Unlike DLSS 3, it needs nothing from the game engine, so it works on any video.</li>
-    <li><b>Low latency.</b> The motion is estimated at half resolution, the whole AI step runs as a single CUDA graph, and late frames are dropped instead of queued.</li>
-  </ol>
-
-  <h2>Get started</h2>
-  <ol>
-    <li>Download the <a href="https://github.com/d3Ita/capture-smooth/releases/latest">latest release</a>: NVIDIA (fastest, two zip parts to extract in the same folder) or DirectML (any DirectX 12 GPU).</li>
-    <li>Close OBS and your capture card's software.</li>
-    <li>Double-click the exe, pick your console's output resolution and the game's frame rate, then press <b>Lancer</b>.</li>
-  </ol>
-  <p class="note">Keys: Esc quit · Space AI on/off · 2 / 3 / 4 multiplier · F1 counter · M sound. Full guide in the <a href="https://github.com/d3Ita/capture-smooth#readme">README</a>.</p>
-
-  <footer>
-    Capture Smooth is free software (MIT). RIFE by hzwer et al. (MIT). Not affiliated with Sony, Microsoft, Nintendo, Elgato, Rockstar Games or NVIDIA.
-    Gameplay footage: Grand Theft Auto VI © Rockstar Games, shown only to demonstrate the software.
-  </footer>
 </main>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="media/icon.png" alt="">Capture Smooth</a>
+    <div class="fl">
+      <a href="https://github.com/d3Ita/capture-smooth">GitHub</a>
+      <a href="https://github.com/d3Ita/capture-smooth/releases" data-i18n="foot.rel">Releases</a>
+      <a href="https://github.com/d3Ita/capture-smooth/blob/main/LICENSE">MIT</a>
+      <a href="https://github.com/d3Ita/capture-smooth/blob/main/THIRD_PARTY.md" data-i18n="foot.credits">Credits</a>
+    </div>
+    <div class="legal" data-i18n="foot.legal">Capture Smooth is an independent open-source project. RIFE by hzwer et al. (MIT). Not affiliated with or endorsed by NVIDIA, Sony, Microsoft, Nintendo, Elgato or Rockstar Games; product names only describe compatibility. Gameplay footage: Grand Theft Auto VI © Rockstar Games, shown only to demonstrate the software.</div>
+  </div>
+</footer>
+
 <script>
-// 30 / 90 switch: only the visible video decodes; switching jumps to the same moment in the other one.
-const v30 = document.getElementById("v30"), v90 = document.getElementById("v90");
-const b30 = document.getElementById("b30"), b90 = document.getElementById("b90");
-let cur = v90, inView = false;
-v30.classList.add("hidden");
-function show(next) {
-  if (next === cur) return;
-  const t = cur.currentTime;
-  cur.pause();
-  next.classList.remove("hidden");
-  cur.classList.add("hidden");
-  cur = next;
-  b30.classList.toggle("on", cur === v30);
-  b90.classList.toggle("on", cur === v90);
-  const go = () => {
-    next.currentTime = Math.min(t, (next.duration || t + 1) - 0.05);
-    if (inView && cur === next) next.play().catch(() => {});
-  };
-  next.readyState >= 1 ? go() : next.addEventListener("loadedmetadata", go, { once: true });
+const FR = {
+  "nav.demo": "Comparer", "nav.perf": "Performances", "nav.features": "Fonctions", "nav.how": "Fonctionnement", "nav.download": "Télécharger",
+  "hero.eyebrow": "Génération d'images par IA pour boîtier de capture",
+  "hero.title": "30 fps en entrée.<br><em>90 fps</em> à l'écran.",
+  "hero.lead": "Capture Smooth lit ton boîtier de capture et génère de nouvelles images entre les vraies, sur la carte graphique de ton PC. Toutes les consoles, tous les jeux, aucun mod.",
+  "hero.dl": "Télécharger gratuitement", "hero.see": "Voir la différence",
+  "hero.m1": "<b>Gratuit</b> et open source (MIT)", "hero.m2": "Cartes <b>NVIDIA</b>, AMD et Intel", "hero.m3": "<b>PS5</b>, Xbox, Switch",
+  "hero.live": "Capture Smooth · 90 fps · vrai gameplay",
+  "cmp.k": "Comparer", "cmp.h": "Glisse pour voir la différence",
+  "cmp.sub": "Même gameplay, même instant. À gauche : ce que la console envoie. À droite : Capture Smooth. Regarde le décor quand la caméra tourne.",
+  "cmp.l": "Console · 30 fps", "cmp.bl": "Console", "cmp.ls": "Signal d'origine", "cmp.rs": "×3 avec images IA",
+  "cmp.hint": "Fais glisser la poignée, ou utilise les flèches ← →.", "cmp.checking": "Vérification de ton écran…",
+  "tab.split": "Écran coupé · 90 fps", "tab.side": "Côte à côte · 60 fps", "tab.slow": "Ralenti ×4",
+  "cap.split": "Moitié gauche : ce que la console envoie. Moitié droite : Capture Smooth, sur la même image.",
+  "cap.side": "À gauche 30 fps, à droite Capture Smooth en ×2 (60 fps) : visible même sur un écran 60 Hz.",
+  "cap.slow": "Au ralenti, l'original répète chaque image du jeu ; Capture Smooth comble les trous avec des images IA.",
+  "perf.k": "Performances", "perf.h": "Jusqu'à 3× plus d'images",
+  "perf.sub": "Mesuré sur une RTX 4070 SUPER, console en 4K, capturée en 1440p.",
+  "ch.30": "Jeu à 30 fps", "ch.30n": "La plupart des jeux console en mode qualité", "ch.orig": "Console (original)",
+  "ch.60": "Jeu à 60 fps", "ch.60n": "Modes performance, jeux de sport et de course",
+  "sp.1": "de retard ajouté, 30 → 90 fps", "sp.2": "de retard ajouté, 60 → 120 fps", "sp.3": "par image IA en 1440p (CUDA)", "sp.4": "gratuit, sans compte, sans pub",
+  "t.game": "Jeu", "t.mode": "Mode", "t.shown": "Affiché", "t.ai": "IA par image", "t.lat": "Retard ajouté",
+  "ai.k": "Sous le capot", "ai.h": "Deux images IA entre chaque vraie image",
+  "ai.sub": "Le réseau estime comment chaque pixel bouge entre deux images du jeu, puis dessine les images intermédiaires. Toutes les 33 ms, trois images au lieu d'une.",
+  "ai.real": "Vraie image", "ai.gen": "Image IA", "ai.next": "Vraie image suivante",
+  "feat.k": "Fonctions", "feat.h": "Pensé pour le jeu. Réglé pour la latence.",
+  "f1.h": "Génération d'images par IA", "f1.p": "RIFE 4.6, un réseau d'interpolation de pointe. Il n'a besoin de rien venant du jeu : il marche sur n'importe quel flux vidéo.",
+  "f2.h": "Détection des doublons", "f2.p": "Un jeu à 30 fps dans un signal 60 Hz envoie chaque image deux fois. Les copies sont ignorées : les images IA vont seulement entre les vraies.",
+  "f3.h": "Faible latence", "f3.p": "Mouvement estimé en demi-résolution, l'étape IA enregistrée en un seul CUDA graph, images régulières, les retardataires abandonnées.",
+  "f4.h": "NVIDIA ou toute carte", "f4.p": "Un moteur CUDA pour les GeForce, et un moteur DirectML pour toute carte DirectX 12 : AMD Radeon, Intel Arc, anciennes NVIDIA.",
+  "f5.h": "Le son du jeu inclus", "f5.p": "Le son du boîtier passe sur tes haut-parleurs, avec un décalage réglable pour rester synchro avec l'image.",
+  "f6.h": "Réglage en un clic", "f6.p": "Double-clic, choisis la sortie de ta console et les fps du jeu, clique sur Lancer. Plein écran sans bordure, compteur fps sur F1.",
+  "how.k": "Fonctionnement", "how.h": "De ta console à ton écran",
+  "how.1h": "Console", "how.1p": "PS5, Xbox ou Switch, n'importe quel jeu. Rien à installer dessus.",
+  "how.2h": "Boîtier de capture", "how.2p": "HDMI en entrée, USB vers le PC. 1080p ou 1440p à 60 Hz.",
+  "how.3a": "Ignore les images en double", "how.3b": "Estime le mouvement (RIFE)", "how.3c": "Dessine 1 ou 2 images intermédiaires",
+  "how.4h": "Ton écran", "how.4p": "60, 90 ou 120 fps, réguliers, avec le son.",
+  "dl.k": "Téléchargement", "dl.h": "Télécharge Capture Smooth",
+  "dl.sub": "Windows 10 ou 11, un boîtier de capture et une carte graphique. Décompresse, double-clique sur l'exe, joue.",
+  "dl.rec": "Recommandé · le plus rapide", "dl.n1": "GTX 10 ou plus récente, pilote à jour", "dl.n2": "Moteur CUDA : 7 ms par image IA, ~32 ms à 90 fps",
+  "dl.n3": "2,8 Go en deux parties : décompresse-les dans le même dossier", "dl.p1": "Partie 1", "dl.p2": "Partie 2",
+  "dl.any": "Toute carte DirectX 12", "dl.d1": "AMD Radeon, Intel Arc, NVIDIA", "dl.d2": "Léger : un seul fichier de 114 Mo",
+  "dl.d3": "Environ deux fois plus lent que CUDA sur les cartes NVIDIA", "dl.dd": "Télécharger",
+  "s1.h": "Ferme OBS", "s1.p": "OBS et le logiciel du boîtier bloquent l'appareil. Ferme-les avant de lancer.",
+  "s2.h": "Choisis tes réglages", "s2.p": "Double-clique sur l'exe. Choisis la résolution que ta console envoie vraiment et les fps de ton jeu.",
+  "s3.h": "Joue", "s3.p": "Clique sur Lancer. Échap pour quitter, Espace pour activer ou couper l'IA et comparer.",
+  "k.esc": "quitter", "k.space": "IA on / off", "k.mult": "multiplicateur", "k.f1": "compteur fps", "k.m": "son",
+  "faq.h": "Questions",
+  "q1": "C'est comme la génération d'images du DLSS 3 ?", "a1": "Même idée, source différente. Le DLSS 3 utilise les données de mouvement du moteur du jeu ; Capture Smooth ne voit que la vidéo, donc il estime le mouvement lui-même avec RIFE. C'est ce qui lui permet de marcher avec une console, qu'aucun outil PC ne peut modifier.",
+  "q2": "Est-ce que ça ajoute de la latence ?", "a2": "Un peu : environ 32 ms à 90 fps, et 19 ms pour un jeu 60 fps affiché à 120 fps. Une image intermédiaire a besoin de la vraie image suivante, donc un petit retard est inévitable. Pour les jeux de tir compétitifs, utilise ×2 ou coupe l'IA avec Espace.",
+  "q3": "Quels boîtiers de capture marchent ?", "a3": "Tout boîtier que Windows voit comme une caméra (UVC ou DirectShow) : Elgato HD60 X, 4K X, Cam Link, AVerMedia Live Gamer, et la plupart des boîtiers HDMI-USB génériques. L'appli a été développée sur un Elgato HD60 X.",
+  "q4": "Ma console refuse le 1440p. Que faire ?", "a4": "La console ne propose que les résolutions de l'écran branché sur la sortie HDMI du boîtier. Dans le logiciel du boîtier, mets l'EDID sur « interne », débranche et rebranche la console, et le 1440p (ou la 4K) apparaît. La sortie 4K marche aussi : le boîtier la réduit.",
+  "q5": "Pourquoi un écran noir ou « invalid resolution » ?", "a5": "Les boîtiers de capture ne peuvent pas agrandir l'image. Si tu choisis 1440p alors que la console envoie du 1080p, le boîtier affiche une image d'erreur. Choisis la résolution que la console envoie vraiment.",
+  "q6": "C'est vraiment gratuit ?", "a6": "Oui. Le code est sous licence MIT, le modèle IA (RIFE) aussi, et il n'y a rien à acheter ni de compte à créer.",
+  "final.k": "Téléchargement gratuit", "final.h": "Donne à tes jeux console les fps qu'ils méritent", "final.src": "Code source",
+  "foot.rel": "Versions", "foot.credits": "Crédits",
+  "foot.legal": "Capture Smooth est un projet open source indépendant. RIFE par hzwer et al. (MIT). Sans lien avec NVIDIA, Sony, Microsoft, Nintendo, Elgato ou Rockstar Games, et non approuvé par eux ; les noms de produits indiquent seulement la compatibilité. Images de jeu : Grand Theft Auto VI © Rockstar Games, montrées uniquement pour présenter le logiciel.",
+  "hz.ok": "Ton écran tourne à environ {hz} Hz : parfait pour voir le 90 fps.",
+  "hz.low": "Ton écran tourne à environ {hz} Hz : les deux côtés se ressembleront. Essaie le ralenti plus bas.",
+};
+const EN_EXTRA = {
+  "hz.ok": "Your screen runs at about {hz} Hz: good to see 90 fps.",
+  "hz.low": "Your screen runs at about {hz} Hz, so both sides will look alike. Try the slow motion below.",
+  "cap.side": "Left 30 fps, right Capture Smooth at ×2 (60 fps): visible even on a 60 Hz screen.",
+  "cap.slow": "Slowed down, the original repeats each game frame; Capture Smooth fills the gaps with AI frames.",
+};
+
+// ---------- language
+const EN = {};
+document.querySelectorAll("[data-i18n]").forEach(el => { EN[el.dataset.i18n] = el.innerHTML; });
+let lang = "en", hzVal = 0;
+const t = key => (lang === "fr" ? FR[key] : (EN_EXTRA[key] ?? EN[key])) ?? EN[key] ?? key;
+function setLang(l) {
+  lang = l;
+  document.documentElement.lang = l;
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.innerHTML = t(el.dataset.i18n); });
+  document.querySelectorAll(".lang button").forEach(b => b.classList.toggle("on", b.dataset.lang === l));
+  showHz();
+  try { localStorage.setItem("cs-lang", l); } catch (e) {}
 }
-b30.onclick = () => show(v30);
-b90.onclick = () => show(v90);
-document.addEventListener("keydown", e => {
-  if (e.key === "Tab" && inView) { e.preventDefault(); show(cur === v30 ? v90 : v30); }
+document.querySelectorAll(".lang button").forEach(b => b.onclick = () => setLang(b.dataset.lang));
+let saved = null;
+try { saved = localStorage.getItem("cs-lang"); } catch (e) {}
+setLang(saved || ((navigator.language || "").toLowerCase().startsWith("fr") ? "fr" : "en"));
+
+// ---------- play videos only while on screen
+const visible = new Map();
+function watch(el, onChange) {
+  new IntersectionObserver(([e]) => { visible.set(el, e.isIntersecting); onChange(e.isIntersecting); }, { threshold: 0.35 }).observe(el);
+}
+const hero = document.getElementById("heroVideo");
+watch(hero, on => on ? hero.play().catch(() => {}) : hero.pause());
+
+// ---------- drag comparison: two synced videos, the 30 fps one clipped to the left of the handle
+const box = document.getElementById("cmpBox"), c30 = document.getElementById("c30"), c90 = document.getElementById("c90");
+let pos = 50;
+function setPos(p) { pos = Math.max(2, Math.min(98, p)); box.style.setProperty("--pos", pos + "%"); }
+function fromEvent(e) { const r = box.getBoundingClientRect(); setPos((e.clientX - r.left) / r.width * 100); }
+let dragging = false;
+box.addEventListener("pointerdown", e => { dragging = true; box.setPointerCapture(e.pointerId); fromEvent(e); });
+box.addEventListener("pointermove", e => { if (dragging) fromEvent(e); });
+box.addEventListener("pointerup", () => { dragging = false; });
+box.tabIndex = 0;
+box.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft") { setPos(pos - 4); e.preventDefault(); }
+  if (e.key === "ArrowRight") { setPos(pos + 4); e.preventDefault(); }
 });
-
-// Play a video only while it is on screen, so the browser never decodes two at once.
-const io = new IntersectionObserver(entries => {
-  for (const e of entries) {
-    if (e.target.classList.contains("player")) {
-      inView = e.isIntersecting;
-      inView ? cur.play().catch(() => {}) : cur.pause();
-    } else {
-      e.isIntersecting ? e.target.play().catch(() => {}) : e.target.pause();
-    }
+let syncTimer = null;
+function playCompare(on) {
+  if (on) {
+    c30.currentTime = c90.currentTime;
+    Promise.all([c90.play(), c30.play()]).catch(() => {});
+    syncTimer = setInterval(() => {  // keep the two videos on the same moment
+      if (Math.abs(c30.currentTime - c90.currentTime) > 0.06) c30.currentTime = c90.currentTime;
+    }, 500);
+  } else {
+    c90.pause(); c30.pause(); clearInterval(syncTimer);
   }
-}, { threshold: 0.5 });
-io.observe(document.querySelector(".player"));
-document.querySelectorAll("video.auto").forEach(v => io.observe(v));
+}
+watch(box, playCompare);
 
-// Measure the screen refresh rate, to tell whether 90 fps can be seen here.
-(function () {
+// ---------- more comparisons: one video, its source changes
+const tabVideo = document.getElementById("tabVideo"), tabCap = document.getElementById("tabCap");
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
+  tabVideo.poster = b.dataset.poster;
+  tabVideo.src = b.dataset.src;
+  tabCap.dataset.i18n = b.dataset.cap;
+  tabCap.innerHTML = t(b.dataset.cap);
+  if (visible.get(tabVideo)) tabVideo.play().catch(() => {});
+});
+watch(tabVideo, on => on ? tabVideo.play().catch(() => {}) : tabVideo.pause());
+
+// ---------- fps bars grow when the chart comes into view
+const chart = document.getElementById("chart");
+new IntersectionObserver(([e]) => {
+  if (!e.isIntersecting) return;
+  chart.classList.add("on");
+  chart.querySelectorAll(".fill").forEach(f => f.style.width = f.dataset.w + "%");
+}, { threshold: 0.3 }).observe(chart);
+
+// ---------- screen refresh rate
+function showHz() {
+  if (!hzVal) return;
   const el = document.getElementById("hz");
+  el.textContent = t(hzVal >= 85 ? "hz.ok" : "hz.low").replace("{hz}", hzVal);
+  el.className = hzVal >= 85 ? "ok" : "low";
+}
+(function () {
   let n = 0, t0 = 0;
-  function tick(t) {
-    if (!t0) t0 = t;
+  function tick(ts) {
+    if (!t0) t0 = ts;
     if (++n < 120) return requestAnimationFrame(tick);
-    const hz = Math.round(1000 * (n - 1) / (t - t0));
-    el.textContent = hz >= 85 ? `yours runs at about ${hz} Hz, good.`
-      : `yours runs at about ${hz} Hz, so both will look alike. Use the slow motion below, or open this page on a faster screen.`;
-    el.className = hz >= 85 ? "ok" : "low";
+    hzVal = Math.round(1000 * (n - 1) / (ts - t0));
+    showHz();
   }
   requestAnimationFrame(tick);
 })();
