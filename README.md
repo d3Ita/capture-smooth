@@ -21,7 +21,8 @@ console ──HDMI──> capture card ──USB──> PC: capture → duplicat
 
 - **Frame interpolation with RIFE 4.6.** It works on any video, because it needs no game engine data (DLSS 3 does).
 - **Duplicate detection.** A 30 fps game in a 60 Hz signal sends every frame twice. The copies are ignored, so in-between frames are only made between real game frames.
-- **Low latency.** Frames are paced evenly, late frames are dropped, and nothing waits in a queue.
+- **Low latency.** Frames are paced evenly, late frames are dropped, and nothing waits in a queue. If the card cannot keep up with ×3, it switches to an even ×2 by itself.
+- **Clean picture.** Scene cuts are shown directly instead of a ghostly blend, HUD elements that do not move (minimap, text) are kept from the real frame, and an adjustable contrast-adaptive sharpening (like AMD CAS / NVIDIA NIS) makes the picture crisper without halos.
 - **Two engines:**
   - **CUDA** (PyTorch, NVIDIA): one CUDA graph per in-between frame, and the flow is estimated at half resolution with only the final warp at full resolution.
   - **DirectML** (ONNX Runtime): works on any DirectX 12 GPU (AMD, Intel, NVIDIA).
@@ -64,7 +65,7 @@ Then press **Lancer**. Your choice is remembered. Options passed on the command 
 | 1080p | 30 fps | 90 fps | 60 fps |
 | 1080p | 60 fps | 120 fps | 120 fps |
 
-**Keys:** Esc quit · Space interpolation on/off · 2 / 3 / 4 multiplier · F1 or I counter · M sound
+**Keys:** Esc quit · Space interpolation on/off · 2 / 3 / 4 multiplier · S sharpening · H HUD protection · F1 or I counter · M sound
 
 ## Setup tips
 
@@ -86,6 +87,9 @@ Then press **Lancer**. Your choice is remembered. Options passed on the command 
 --quality rapide|normal  normal = flow at full resolution (sharper, twice slower; 1080p only)
 --mode sans-bordure|plein-ecran|fenetre
 --vsync                  no tearing without G-Sync (adds latency)
+--nettete 0-100           sharpening strength (default 30, S toggles it)
+--no-hud                 no HUD protection (H toggles it)
+--no-cut                 interpolate across scene cuts too
 --audio-delay MS, --no-audio
 --test                   animated test picture instead of the capture card
 --show-taskbar           shows the taskbar again if the app was killed
@@ -120,7 +124,7 @@ Génération d'images gratuite et open source pour un **boîtier de capture** : 
 
 Ensuite, **double-clique sur l'exe**. Une fenêtre de réglages s'ouvre : choisis la sortie vidéo de la console, les fps du jeu, la fluidité ou la latence, puis clique sur **Lancer**. Tes choix sont mémorisés.
 
-**Touches :** Échap quitter · Espace interpolation on/off · 2/3/4 multiplicateur · F1 ou I compteur · M son
+**Touches :** Échap quitter · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son
 
 **À savoir :**
 
