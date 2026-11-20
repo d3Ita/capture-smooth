@@ -475,7 +475,15 @@ def main():
     ap.add_argument("--snapshot", default="", help=argparse.SUPPRESS)  # save one displayed frame after 5 s
     ap.add_argument("--no-audio", action="store_true", help="ne pas jouer le son du boîtier")
     ap.add_argument("--audio-delay", type=float, default=0, help="retarde le son de N ms si il arrive avant l'image")
-    args = ap.parse_args()
+    ap.add_argument("--hide-counter", action="store_true", help="démarre avec le compteur masqué (F1 l'affiche)")
+    if len(sys.argv) == 1:  # double-click on the .exe: settings window
+        from launcher import choose
+        chosen = choose(APP)
+        if chosen is None:
+            return
+        args = ap.parse_args(chosen)
+    else:
+        args = ap.parse_args()
 
     if args.show_taskbar:
         from taskbar import show_taskbar
@@ -522,6 +530,7 @@ def main():
         except Exception as e:
             print(f"Son : désactivé ({e})")
     display.audio = audio
+    display.overlay_on = not args.hide_counter
     print("Échap = quitter · Espace = interpolation on/off · 2/3/4 = multiplicateur · F1 ou I = compteur · M = son\n")
 
     def report():

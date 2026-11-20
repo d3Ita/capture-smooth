@@ -1,0 +1,130 @@
+"""Settings window shown when the app is started without options (double-click on the .exe).
+
+Returns the command-line options to run with, or None if the window was closed. The last choice is
+remembered in %APPDATA%\\CaptureSmooth\\settings.json.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+SETTINGS = Path(os.environ.get("APPDATA", Path.home())) / "CaptureSmooth" / "settings.json"
+DEFAULTS = {"res": "1440p", "game": "30", "mult": "max", "audio": True, "counter": True}
+
+
+def load():
+    try:
+        return {**DEFAULTS, **json.loads(SETTINGS.read_text(encoding="utf-8"))}
+    except Exception:
+        return dict(DEFAULTS)
+
+
+def save(s):
+    try:
+        SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS.write_text(json.dumps(s), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def to_args(s, test=False):
+    game = int(s["game"])
+    x = (3 if game == 30 else 2) if s["mult"] == "max" else 2
+    args = ["--res", s["res"], "--x", str(x)]
+    if not s["audio"]:
+        args.append("--no-audio")
+    if not s["counter"]:
+        args.append("--hide-counter")
+    if test:
+        args += ["--test", "--windowed", "--test-game-fps", str(game)]
+    return args
+
+
+def choose(title="Capture Smooth"):
+    import tkinter as tk
+    from tkinter import ttk
+
+    s = load()
+    result = {"args": None}
+    root = tk.Tk()
+    root.title(title)
+    root.resizable(False, False)
+    try:
+        icon = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "assets" / "icon.ico"
+        root.iconbitmap(str(icon))
+    except Exception:
+        pass
+    pad = {"padx": 14, "pady": 4}
+    frm = ttk.Frame(root, padding=12)
+    frm.grid()
+
+    ttk.Label(frm, text=title, font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", **pad)
+    ttk.Label(frm, text="Images intermédiaires par IA pour ton boîtier de capture",
+              foreground="#666").grid(row=1, column=0, columnspan=2, sticky="w", padx=14)
+
+    res = tk.StringVar(value=s["res"])
+    box = ttk.LabelFrame(frm, text=" Sortie vidéo de la console ", padding=8)
+    box.grid(row=2, column=0, columnspan=2, sticky="ew", **pad)
+    ttk.Radiobutton(box, text="1440p ou 4K", variable=res, value="1440p").grid(row=0, column=0, sticky="w")
+    ttk.Radiobutton(box, text="1080p", variable=res, value="1080p").grid(row=0, column=1, sticky="w", padx=20)
+
+    game = tk.StringVar(value=s["game"])
+    box = ttk.LabelFrame(frm, text=" Le jeu tourne à ", padding=8)
+    box.grid(row=3, column=0, columnspan=2, sticky="ew", **pad)
+    ttk.Radiobutton(box, text="30 fps", variable=game, value="30").grid(row=0, column=0, sticky="w")
+    ttk.Radiobutton(box, text="60 fps", variable=game, value="60").grid(row=0, column=1, sticky="w", padx=20)
+
+    mult = tk.StringVar(value=s["mult"])
+    box = ttk.LabelFrame(frm, text=" Priorité ", padding=8)
+    box.grid(row=4, column=0, columnspan=2, sticky="ew", **pad)
+    hint = ttk.Label(box, foreground="#666")
+    ttk.Radiobutton(box, text="Fluidité maximale", variable=mult, value="max").grid(row=0, column=0, sticky="w")
+    ttk.Radiobutton(box, text="Moins de latence", variable=mult, value="low").grid(row=0, column=1, sticky="w", padx=20)
+    hint.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+    def update_hint(*_):
+        g = int(game.get())
+        x = (3 if g == 30 else 2) if mult.get() == "max" else 2
+        lat = {(30, 3): 32, (30, 2): 26, (60, 2): 19}.get((g, x), 25)
+        hint.config(text=f"Affichage : {g * x} fps  ·  retard ajouté ≈ {lat} ms (RTX 4070 SUPER)")
+
+    for v in (game, mult):
+        v.trace_add("write", update_hint)
+    update_hint()
+
+    audio = tk.BooleanVar(value=s["audio"])
+    counter = tk.BooleanVar(value=s["counter"])
+    ttk.Checkbutton(frm, text="Son du boîtier", variable=audio).grid(row=5, column=0, sticky="w", **pad)
+    ttk.Checkbutton(frm, text="Compteur fps (F1)", variable=counter).grid(row=5, column=1, sticky="w", **pad)
+
+    ttk.Label(frm, text="Ferme OBS avant de lancer.  Échap = quitter · Espace = IA on/off · M = son",
+              foreground="#666").grid(row=6, column=0, columnspan=2, sticky="w", padx=14, pady=(8, 4))
+
+    def current():
+        return {"res": res.get(), "game": game.get(), "mult": mult.get(), "audio": audio.get(),
+                "counter": counter.get()}
+
+    def go(test=False):
+        c = current()
+        save(c)
+        result["args"] = to_args(c, test)
+        root.destroy()
+
+    btns = ttk.Frame(frm)
+    btns.grid(row=7, column=0, columnspan=2, sticky="ew", padx=14, pady=(8, 2))
+    start = ttk.Button(btns, text="Lancer", command=go)
+    start.pack(side="right")
+    ttk.Button(btns, text="Tester sans console", command=lambda: go(True)).pack(side="right", padx=8)
+    root.bind("<Return>", lambda e: go())
+    root.bind("<Escape>", lambda e: root.destroy())
+    start.focus_set()
+
+    root.update_idletasks()
+    w, h = root.winfo_width(), root.winfo_height()
+    root.geometry(f"+{(root.winfo_screenwidth() - w) // 2}+{(root.winfo_screenheight() - h) // 3}")
+    root.mainloop()
+    return result["args"]
+
+
+if __name__ == "__main__":
+    print(choose())

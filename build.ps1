@@ -10,17 +10,12 @@ Set-Location $PSScriptRoot
 $venv = Join-Path $PSScriptRoot "..\.venv-dml"
 if (-not (Test-Path "$venv\Scripts\python.exe")) { $venv = Join-Path $PSScriptRoot ".venv-dml" }
 $common = @("--noconfirm", "--clean", "--console", "--distpath", "dist", "--workpath", "build",
-            "--collect-binaries", "glfw", "--exclude-module", "tkinter", "--exclude-module", "matplotlib",
-            "--icon", "NONE")
+            "--collect-binaries", "glfw", "--exclude-module", "matplotlib", "--add-data", "assets\icon.ico;assets",
+            "--icon", "assets\icon.ico")
 
-# Launchers shipped next to the exe (same choices as the ones in the repo).
+# The exe opens a settings window on double-click; only the rescue shortcut ships next to it.
 $launchers = [ordered]@{
-    "Jeu 30 fps - 90 fps (console en 1440p ou 4K).cmd"  = "--res 1440p --x 3"
-    "Jeu 60 fps - 120 fps (console en 1440p ou 4K).cmd" = "--res 1440p --x 2"
-    "Jeu 30 fps - 90 fps (console en 1080p).cmd"        = "--res 1080p --x 3"
-    "Jeu 60 fps - 120 fps (console en 1080p).cmd"       = "--res 1080p --x 2"
-    "Tester sans console.cmd"                           = "--test --windowed --test-game-fps 30 --x 3"
-    "Reafficher la barre des taches.cmd"                = "--show-taskbar"
+    "Reafficher la barre des taches.cmd" = "--show-taskbar"
 }
 
 function Finish($name) {
