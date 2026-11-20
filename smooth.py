@@ -174,6 +174,65 @@ class CaptureSource(Source):
         self.cap.release()
 
 
+class WindowSource(Source):
+    """PS Remote Play (or any window) captured with Windows Graphics Capture; see window_source.py."""
+
+    def __init__(self, fragment="PS Remote Play", out_size=(1920, 1080)):
+        super().__init__()
+        from windows_capture import WindowsCapture
+        from window_source import find_windows, user32, video_rect
+
+        wins = find_windows(fragment)
+        if not wins:
+            raise RuntimeError(f"fenêtre « {fragment} » introuvable. Lance PS Remote Play, connecte-toi à ta PS5, "
+                               "attends que l'image du jeu s'affiche, puis relance Capture Smooth.")
+        self.hwnd, self.title = wins[0]
+        if user32.IsIconic(self.hwnd):
+            raise RuntimeError(f"la fenêtre « {self.title} » est réduite. Rouvre-la : elle peut rester derrière "
+                               "Capture Smooth, mais pas dans la barre des tâches.")
+        self.size, self.fps = out_size, 60.0
+        self.crop, self.crop_age = None, 0
+        self.first = threading.Event()
+        self.control = None
+        self.cap = WindowsCapture(cursor_capture=False, draw_border=False, window_hwnd=self.hwnd)
+
+        @self.cap.event
+        def on_frame_arrived(frame, control):
+            if not self.running:
+                control.stop()
+                return
+            buf = frame.frame_buffer  # BGRA, only valid during this call
+            h, w = buf.shape[:2]
+            self.crop_age += 1
+            if self.crop is None or self.crop[0] != (w, h) or self.crop_age > 60:  # window moved or resized
+                self.crop, self.crop_age = ((w, h), video_rect(self.hwnd, w, h)), 0
+            x, y, cw, ch = self.crop[1]
+            if cw < 16 or ch < 9:
+                return
+            interp = cv2.INTER_AREA if cw > self.size[0] else cv2.INTER_LINEAR
+            self.publish(cv2.resize(buf[y:y + ch, x:x + cw, :3], self.size, interpolation=interp))
+            self.first.set()
+
+        @self.cap.event
+        def on_closed():
+            self.error = f"La fenêtre « {self.title} » s'est fermée."
+            self.running = False
+
+    def start(self):
+        self.control = self.cap.start_free_threaded()
+        if not self.first.wait(4):
+            self.running = False
+            raise RuntimeError(f"aucune image ne vient de « {self.title} ». Vérifie que le jeu s'affiche dans "
+                               "PS Remote Play et que la fenêtre n'est pas réduite.")
+
+    def join(self, timeout=None):
+        if self.control is not None:
+            try:
+                self.control.stop()
+            except Exception:
+                pass
+
+
 class TestSource(Source):
     """Synthetic moving picture, to try the app without the console."""
 
@@ -326,9 +385,13 @@ class Worker(threading.Thread):
 # ---------------------------------------------------------------- display
 
 class Display:
-    def __init__(self, size, mode_name, vsync, state, stats):
+    def __init__(self, size, mode_name, vsync, state, stats, focus_target=None):
+        """focus_target: window that must keep the keyboard/controller focus (PS Remote Play). Capture Smooth then
+        stays on top without ever taking the focus, and reads its keys directly from the keyboard."""
         self.W, self.H = size
         self.state, self.stats = state, stats
+        self.focus_target = focus_target
+        self.keys_down = set()
         self.queue = collections.deque()
         self.cond = threading.Condition()
 
@@ -336,6 +399,8 @@ class Display:
             raise RuntimeError("OpenGL indisponible")
         mon = glfw.get_primary_monitor()
         mode = glfw.get_video_mode(mon)
+        if focus_target:
+            glfw.window_hint(glfw.FOCUS_ON_SHOW, False)
         if mode_name == "fenetre":
             self.win = glfw.create_window(1280, 720, APP, None, None)
         elif mode_name == "sans-bordure":
@@ -357,6 +422,8 @@ class Display:
         glfw.set_input_mode(self.win, glfw.CURSOR, glfw.CURSOR_HIDDEN)
         glfw.set_key_callback(self.win, self.on_key)
         self.refresh = mode.refresh_rate
+        if focus_target:
+            self.no_focus()
 
         glClearColor(0, 0, 0, 1)
         glEnable(GL_TEXTURE_2D)
@@ -423,31 +490,65 @@ class Display:
         glDisable(GL_BLEND)
         glBindTexture(GL_TEXTURE_2D, self.tex)
 
+    def no_focus(self):
+        """Always on top, never activated (clicks do not take the focus), focus handed back to the target."""
+        import ctypes
+        u32 = ctypes.windll.user32
+        hwnd = glfw.get_win32_window(self.win)
+        GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOPMOST = -20, 0x08000000, 0x00000008
+        u32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, u32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_TOPMOST)
+        u32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # HWND_TOPMOST, no move/size/activate
+        u32.SetForegroundWindow(self.focus_target)
+        self.own_hwnd = hwnd
+
+    # Virtual-key codes read in Remote Play mode (the keyboard focus stays with Remote Play).
+    GLOBAL_KEYS = {0x1B: "quit", 0x70: "counter", 0x49: "counter", 0x4D: "mute", 0x20: "ai", 0x53: "sharp",
+                   0x48: "hud", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
+
+    def poll_global_keys(self):
+        import ctypes
+        u32 = ctypes.windll.user32
+        fg = u32.GetForegroundWindow()
+        if fg not in (self.focus_target, getattr(self, "own_hwnd", None)):
+            self.keys_down.clear()
+            return  # typing in another program must not drive Capture Smooth
+        for vk, action in self.GLOBAL_KEYS.items():
+            down = bool(u32.GetAsyncKeyState(vk) & 0x8000)
+            if down and vk not in self.keys_down:
+                self.act(action)
+            (self.keys_down.add if down else self.keys_down.discard)(vk)
+
     def on_key(self, win, key, scancode, action, mods):
         if action != glfw.PRESS:
             return
-        if key == glfw.KEY_ESCAPE:
-            glfw.set_window_should_close(win, True)
-        elif key in (glfw.KEY_F1, glfw.KEY_I):
+        names = {glfw.KEY_ESCAPE: "quit", glfw.KEY_F1: "counter", glfw.KEY_I: "counter", glfw.KEY_M: "mute",
+                 glfw.KEY_SEMICOLON: "mute", glfw.KEY_SPACE: "ai", glfw.KEY_S: "sharp", glfw.KEY_H: "hud",
+                 glfw.KEY_2: 2, glfw.KEY_3: 3, glfw.KEY_4: 4, glfw.KEY_KP_2: 2, glfw.KEY_KP_3: 3, glfw.KEY_KP_4: 4}
+        if key in names:  # M sits on ";" with an AZERTY keyboard
+            self.act(names[key])
+
+    def act(self, key):
+        if key == "quit":
+            glfw.set_window_should_close(self.win, True)
+        elif key == "counter":
             self.overlay_on = not self.overlay_on
-        elif key == glfw.KEY_SEMICOLON or key == glfw.KEY_M:  # M sits on ';' with an AZERTY keyboard
+        elif key == "mute":
             if self.audio:
                 self.audio.muted = not self.audio.muted
                 print(f"\nSon {'coupé' if self.audio.muted else 'activé'}")
-        elif key == glfw.KEY_SPACE:
+        elif key == "ai":
             self.state.on = not self.state.on
             print(f"\nInterpolation {'ACTIVÉE' if self.state.on else 'DÉSACTIVÉE'}")
-        elif key == glfw.KEY_S:
+        elif key == "sharp":
             self.state.sharp_on = not self.state.sharp_on
             if self.state.sharp_on and self.state.sharpness <= 0:
                 self.state.sharpness = 0.3
             print(f"\nNetteté {'ACTIVÉE' if self.state.sharp_on else 'DÉSACTIVÉE'}")
-        elif key == glfw.KEY_H:
+        elif key == "hud":
             self.state.hud = not self.state.hud
             print(f"\nProtection du HUD {'ACTIVÉE' if self.state.hud else 'DÉSACTIVÉE'}")
-        elif key in (glfw.KEY_2, glfw.KEY_3, glfw.KEY_4, glfw.KEY_KP_2, glfw.KEY_KP_3, glfw.KEY_KP_4):
-            self.state.mult = {glfw.KEY_2: 2, glfw.KEY_3: 3, glfw.KEY_4: 4,
-                               glfw.KEY_KP_2: 2, glfw.KEY_KP_3: 3, glfw.KEY_KP_4: 4}[key]
+        elif key in (2, 3, 4):
+            self.state.mult = key
             print(f"\nMultiplicateur x{self.state.mult}")
 
     def push(self, img, target, t_in):
@@ -489,8 +590,12 @@ class Display:
         glfw.swap_buffers(self.win)
 
     def loop(self):
+        last_poll = 0.0
         while not glfw.window_should_close(self.win) and self.state.running:
             glfw.poll_events()
+            if self.focus_target and now() - last_poll > 0.02:
+                last_poll = now()
+                self.poll_global_keys()
             job = self.next_job()
             if job is None:
                 continue
@@ -589,6 +694,9 @@ def main():
     ap.add_argument("--res", choices=RES, default="1440p", help="résolution de capture (défaut 1440p)")
     ap.add_argument("--fps", type=int, default=60, help="fps de capture (défaut 60)")
     ap.add_argument("--x", type=int, choices=[2, 3, 4], default=2, help="multiplicateur d'images (défaut x2)")
+    ap.add_argument("--source", choices=["capture", "remoteplay"], default="capture",
+                    help="capture = boîtier de capture ; remoteplay = fenêtre PS Remote Play, sans boîtier (plus de latence)")
+    ap.add_argument("--window", default="PS Remote Play", help="titre (ou partie du titre) de la fenêtre à capturer")
     ap.add_argument("--device", default="auto", help="nom (ou numéro) du boîtier de capture (défaut : auto)")
     ap.add_argument("--moteur", choices=["auto", "cuda", "directml"], default="auto",
                     help="cuda = NVIDIA (le plus rapide), directml = toute carte DirectX 12 ; auto = cuda si possible")
@@ -621,7 +729,8 @@ def main():
     else:
         args = ap.parse_args()
 
-    if not (args.show_taskbar or args.list or args.test) and not single_instance():
+    # Only one Capture Smooth may use the capture card (a window source does not need it).
+    if args.source == "capture" and not (args.show_taskbar or args.list or args.test) and not single_instance():
         raise RuntimeError("Capture Smooth est déjà ouvert : ferme l'autre fenêtre (Échap) avant d'en lancer une nouvelle.")
 
     if args.show_taskbar:
@@ -635,10 +744,25 @@ def main():
             print(f"{i}: {n}")
         return
 
+    try:  # real pixel coordinates for window capture, whatever the Windows display scaling
+        import ctypes
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except Exception:
+        pass
+
     w, h = RES[args.res]
+    focus_target = None
     if args.test:
         src = TestSource(w, h, args.fps, args.test_game_fps)
         print(f"Source : image de test {w}x{h} à {args.fps} Hz (jeu simulé à {args.test_game_fps} fps)")
+    elif args.source == "remoteplay":
+        src = WindowSource(args.window)
+        name = src.title
+        focus_target = src.hwnd
+        print(f"Source : fenêtre « {name} » (sans boîtier de capture), image ramenée en 1920x1080")
+        print("  Attention : Remote Play ajoute son propre retard (compression, réseau, décompression),")
+        print("  en général 50 à 100 ms de plus qu'avec un boîtier, et l'image est compressée.")
+        print("  Garde la fenêtre Remote Play ouverte (pas réduite) : Capture Smooth s'affiche par-dessus.")
     else:
         idx, name = pick_device(args.device)
         src = CaptureSource(idx, w, h, args.fps)
@@ -654,12 +778,12 @@ def main():
     engine = make_engine(args.moteur, src.size, work, scale)
     state = State(args.x, max(0, min(args.nettete, 100)) / 100, not args.no_hud, not args.no_cut)
     stats = Stats()
-    display = Display(work, "fenetre" if args.windowed else args.mode, args.vsync, state, stats)
+    display = Display(work, "fenetre" if args.windowed else args.mode, args.vsync, state, stats, focus_target)
     worker = Worker(src, display, state, stats, engine)
     print(f"Prêt. Moteur {engine.name}, image {work[0]}x{work[1]}, IA échelle {scale}, x{args.x}, "
           f"écran {display.refresh} Hz.")
     audio = None
-    if not args.test and not args.no_audio:
+    if not args.test and not args.no_audio and args.source == "capture":  # Remote Play plays its own sound
         try:
             from audio import AudioPassthrough
             audio = AudioPassthrough(wanted=name, delay_ms=args.audio_delay)
@@ -695,7 +819,13 @@ def main():
                 print("\n" + src.error)
                 state.running = False
 
-    src.start()
+    try:
+        src.start()
+    except Exception:  # the display is already up (taskbar hidden): put things back before reporting
+        glfw.terminate()
+        from taskbar import show_taskbar
+        show_taskbar()
+        raise
     worker.start()
     threading.Thread(target=report, daemon=True).start()
     if args.snapshot:

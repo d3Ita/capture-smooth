@@ -9,7 +9,8 @@ import sys
 from pathlib import Path
 
 SETTINGS = Path(os.environ.get("APPDATA", Path.home())) / "CaptureSmooth" / "settings.json"
-DEFAULTS = {"res": "1440p", "game": "30", "mult": "max", "audio": True, "counter": True, "sharp": 30, "hud": True}
+DEFAULTS = {"source": "capture", "res": "1440p", "game": "30", "mult": "max", "audio": True, "counter": True,
+            "sharp": 30, "hud": True}
 
 
 def load():
@@ -31,6 +32,8 @@ def to_args(s, test=False):
     game = int(s["game"])
     x = (3 if game == 30 else 2) if s["mult"] == "max" else 2
     args = ["--res", s["res"], "--x", str(x)]
+    if s.get("source") == "remoteplay" and not test:
+        args += ["--source", "remoteplay"]
     if not s["audio"]:
         args.append("--no-audio")
     if not s["counter"]:
@@ -62,14 +65,35 @@ def choose(title="Capture Smooth"):
     frm.grid()
 
     ttk.Label(frm, text=title, font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", **pad)
-    ttk.Label(frm, text="Images intermédiaires par IA pour ton boîtier de capture",
+    ttk.Label(frm, text="Images intermédiaires par IA pour ta console",
               foreground="#666").grid(row=1, column=0, columnspan=2, sticky="w", padx=14)
 
+    source = tk.StringVar(value=s.get("source", "capture"))
     res = tk.StringVar(value=s["res"])
-    box = ttk.LabelFrame(frm, text=" Sortie vidéo de la console ", padding=8)
+    box = ttk.LabelFrame(frm, text=" Source ", padding=8)
     box.grid(row=2, column=0, columnspan=2, sticky="ew", **pad)
-    ttk.Radiobutton(box, text="1440p ou 4K", variable=res, value="1440p").grid(row=0, column=0, sticky="w")
-    ttk.Radiobutton(box, text="1080p", variable=res, value="1080p").grid(row=0, column=1, sticky="w", padx=20)
+    ttk.Radiobutton(box, text="Boîtier de capture (conseillé)", variable=source, value="capture").grid(
+        row=0, column=0, columnspan=3, sticky="w")
+    ttk.Label(box, text="Sortie vidéo de la console :").grid(row=1, column=0, sticky="w", padx=(22, 8))
+    r1 = ttk.Radiobutton(box, text="1440p ou 4K", variable=res, value="1440p")
+    r2 = ttk.Radiobutton(box, text="1080p", variable=res, value="1080p")
+    r1.grid(row=1, column=1, sticky="w")
+    r2.grid(row=1, column=2, sticky="w", padx=14)
+    ttk.Radiobutton(box, text="PS Remote Play (sans boîtier)", variable=source, value="remoteplay").grid(
+        row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+    warn = ttk.Label(box, foreground="#b45309", wraplength=440, justify="left",
+                     text="Plus de latence : Remote Play ajoute 50 à 100 ms (compression, réseau) en plus de l'IA, "
+                          "et l'image est compressée. Lance PS Remote Play et affiche ton jeu avant de cliquer sur "
+                          "Lancer ; garde sa fenêtre ouverte (pas réduite).")
+    warn.grid(row=3, column=0, columnspan=3, sticky="w", padx=(22, 0), pady=(2, 0))
+
+    def upd_source(*_):
+        rp = source.get() == "remoteplay"
+        for r in (r1, r2):
+            r.state(["disabled"] if rp else ["!disabled"])
+        warn.grid() if rp else warn.grid_remove()
+
+    source.trace_add("write", upd_source)
 
     game = tk.StringVar(value=s["game"])
     box = ttk.LabelFrame(frm, text=" Le jeu tourne à ", padding=8)
@@ -109,6 +133,7 @@ def choose(title="Capture Smooth"):
         sharp_lbl.config(text="désactivée" if v == 0 else f"{v} %" + ("  (conseillé)" if v == 30 else ""))
 
     upd_sharp()
+    upd_source()
     hud = tk.BooleanVar(value=s["hud"])
     ttk.Checkbutton(box, text="Protéger le HUD (mini-carte, textes fixes)", variable=hud).grid(
         row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
@@ -122,7 +147,7 @@ def choose(title="Capture Smooth"):
               foreground="#666").grid(row=7, column=0, columnspan=2, sticky="w", padx=14, pady=(8, 4))
 
     def current():
-        return {"res": res.get(), "game": game.get(), "mult": mult.get(), "audio": audio.get(),
+        return {"source": source.get(), "res": res.get(), "game": game.get(), "mult": mult.get(), "audio": audio.get(),
                 "counter": counter.get(), "sharp": sharp.get(), "hud": hud.get()}
 
     def go(test=False):

@@ -67,6 +67,16 @@ Then press **Lancer**. Your choice is remembered. Options passed on the command 
 
 **Keys:** Esc quit · Space interpolation on/off · 2 / 3 / 4 multiplier · S sharpening · H HUD protection · F1 or I counter · M sound
 
+## Without a capture card: PS Remote Play
+
+Capture Smooth can also take the picture from the official **PS Remote Play** app instead of a capture card: choose **PS Remote Play (sans boîtier)** in the settings window, or start with `--source remoteplay`.
+
+- **More latency.** Remote Play compresses the picture on the PS5, sends it over the network and decompresses it on the PC: usually **50 to 100 ms more** than a capture card, on top of Capture Smooth's own delay.
+- **Lower picture quality**: the stream is compressed and at most 1080p, and compression blocks can show more in AI frames.
+- Start PS Remote Play and show your game first, and keep its window open (not minimized). Capture Smooth shows on top of it without taking the focus, so the controller keeps working in Remote Play. The sound comes from Remote Play.
+
+A capture card stays the recommended way.
+
 ## Setup tips
 
 1. **Close OBS and your capture card's software** before starting, because they lock the device.
@@ -82,6 +92,8 @@ Then press **Lancer**. Your choice is remembered. Options passed on the command 
 --res 1080p|1440p|4k     capture resolution (4K is reduced to 1440p before the AI)
 --fps 30|60              capture frame rate
 --x 2|3|4                frame multiplier (x3 is the useful maximum for 30 fps games)
+--source capture|remoteplay   capture card (default) or the PS Remote Play window
+--window "title"         window to capture with --source remoteplay (default "PS Remote Play")
 --device auto|"name"|N   capture device (--list shows them)
 --moteur auto|cuda|directml
 --quality rapide|normal  normal = flow at full resolution (sharper, twice slower; 1080p only)
@@ -125,6 +137,8 @@ Génération d'images gratuite et open source pour un **boîtier de capture** : 
 Ensuite, **double-clique sur l'exe**. Une fenêtre de réglages s'ouvre : choisis la sortie vidéo de la console, les fps du jeu, la fluidité ou la latence, puis clique sur **Lancer**. Tes choix sont mémorisés.
 
 **Touches :** Échap quitter · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son
+
+**Sans boîtier de capture :** choisis **PS Remote Play (sans boîtier)** dans la fenêtre de réglages. Attention : **plus de latence** (50 à 100 ms de plus qu'avec un boîtier, à cause de la compression et du réseau) et image compressée, en 1080p au maximum. Lance PS Remote Play et affiche ton jeu avant, et garde sa fenêtre ouverte (pas réduite). La manette reste active dans Remote Play, et le son vient de Remote Play.
 
 **À savoir :**
 
