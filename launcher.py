@@ -132,10 +132,16 @@ def choose(title="Capture Smooth"):
         root.destroy()
 
     btns = ttk.Frame(frm)
-    btns.grid(row=8, column=0, columnspan=2, sticky="ew", padx=14, pady=(8, 2))
-    start = ttk.Button(btns, text="Lancer", command=go)
+    btns.grid(row=8, column=0, columnspan=2, sticky="ew", padx=14, pady=(10, 2))
+    # One obvious button to play; the test picture is only a small link, so it is not clicked by mistake.
+    start = tk.Button(btns, text="▶   Lancer le jeu", command=go, font=("Segoe UI", 12, "bold"), fg="white",
+                      bg="#6d4ce0", activebackground="#8466f0", activeforeground="white", relief="flat",
+                      cursor="hand2", padx=26, pady=8, borderwidth=0)
     start.pack(side="right")
-    ttk.Button(btns, text="Tester sans console", command=lambda: go(True)).pack(side="right", padx=8)
+    test = tk.Label(btns, text="Pas de console ? Voir l'image de test", fg="#5b6080", cursor="hand2",
+                    font=("Segoe UI", 9, "underline"))
+    test.pack(side="left", pady=(14, 0))
+    test.bind("<Button-1>", lambda e: go(True))
     root.bind("<Return>", lambda e: go())
     root.bind("<Escape>", lambda e: root.destroy())
     start.focus_set()

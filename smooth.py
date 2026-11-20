@@ -192,7 +192,9 @@ class TestSource(Source):
         cv2.rectangle(f, (w - x - 60, h // 4 - 60), (w - x + 60, h // 4 + 60), (255, 120, 60), -1)
         y = int((np.sin(t * 2.5) * 0.4 + 0.5) * h)
         cv2.rectangle(f, (0, y - 6), (w, y + 6), (200, 200, 200), -1)
-        cv2.putText(f, f"TEST {t:7.2f}s", (40, 90), cv2.FONT_HERSHEY_SIMPLEX, 2.2, (255, 255, 255), 4)
+        cv2.putText(f, f"IMAGE DE TEST {t:6.1f}s", (40, 90), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (255, 255, 255), 4)
+        cv2.putText(f, "Ce n'est pas la console. Pour jouer : Echap, puis 'Lancer le jeu'.", (40, h - 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.1, (120, 230, 255), 2)
         return f
 
     def run(self):
