@@ -21,7 +21,8 @@ import numpy as np
 import glfw
 from OpenGL.GL import (
     GL_BGRA, GL_BLEND, GL_COLOR_BUFFER_BIT, GL_LINEAR, GL_ONE_MINUS_SRC_ALPHA, GL_QUADS, GL_RGBA, GL_RGBA8,
-    GL_SRC_ALPHA, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_TEXTURE_MIN_FILTER, GL_UNPACK_ALIGNMENT,
+    GL_CLAMP_TO_EDGE, GL_SRC_ALPHA, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_TEXTURE_MIN_FILTER, GL_TEXTURE_WRAP_S,
+    GL_TEXTURE_WRAP_T, GL_UNPACK_ALIGNMENT,
     GL_UNSIGNED_BYTE, glBegin, glBindTexture, glBlendFunc, glClear, glClearColor, glDisable, glEnable, glEnd,
     glGenTextures, glPixelStorei, glTexCoord2f, glTexImage2D, glTexParameteri, glTexSubImage2D, glVertex2f,
     glViewport,
@@ -132,21 +133,53 @@ def capture_blockers():
 
 
 class CaptureSource(Source):
+    # Uncompressed formats first. OpenCV already prefers YUY2 over MJPG (a JPEG per frame: blocky, smeared
+    # colour), but ranks NV12 after MJPG, so cards offering only NV12 uncompressed got MJPG. A card that cannot
+    # carry the asked size and fps uncompressed (4K60 on USB 3.0) gets MJPG, then its default.
+    FORMATS = ("YUY2", "NV12", "MJPG", None)  # MJPG at full fps beats YUY2 at half fps
+    UNCOMPRESSED = ("YUY2", "NV12")
+
+    @staticmethod
+    def fourcc_name(cap):
+        v = int(cap.get(cv2.CAP_PROP_FOURCC))
+        name = "".join(chr((v >> 8 * i) & 0xFF) for i in range(4)).strip("\0 ")
+        return name if name.isprintable() and name else "?"
+
+    def open_format(self, index, w, h, fps, fmt):
+        """The card opened in this format at w x h and (about) fps, with its first frame; None otherwise."""
+        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap.release()
+            return None
+        # Order matters with OpenCV's DirectShow backend: a size or fps change sets the card up again in its
+        # default format, while a FOURCC change keeps the current size and fps. So the format comes last.
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+        cap.set(cv2.CAP_PROP_FPS, fps)
+        if fmt:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fmt))
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        ok, frame = cap.read()
+        if ok and fmt and (self.fourcc_name(cap) != fmt or (frame.shape[1], frame.shape[0]) != (w, h)
+                           or cap.get(cv2.CAP_PROP_FPS) < fps - 1):
+            ok = False  # the card picked something else: try the next format
+        if not ok:
+            cap.release()
+            return None
+        return cap, frame
+
     def __init__(self, index, w, h, fps, tries=4):
         super().__init__()
         # The card can be busy for a moment (another program closing): retry for a few seconds.
         for attempt in range(tries):
-            self.cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-            ok = self.cap.isOpened()
-            if ok:
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-                self.cap.set(cv2.CAP_PROP_FPS, fps)
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                ok, frame = self.cap.read()
-            if ok:
+            opened = None
+            for fmt in self.FORMATS:
+                opened = self.open_format(index, w, h, fps, fmt)
+                if opened:
+                    break
+            if opened:
+                self.cap, frame = opened
                 break
-            self.cap.release()
             if attempt < tries - 1:
                 print(f"Le boîtier ne répond pas, nouvel essai ({attempt + 2}/{tries})…")
                 time.sleep(1.5)
@@ -159,6 +192,9 @@ class CaptureSource(Source):
                                "(OBS, logiciel Elgato, appli Caméra, appel vidéo…).")
         self.size = (frame.shape[1], frame.shape[0])
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.format = self.fourcc_name(self.cap)
+        # Windows converts YUY2/NV12 to RGB with the BT.601 (standard-definition) matrix; HD consoles send BT.709.
+        self.needs_709 = self.format in self.UNCOMPRESSED and self.size[1] >= 720
 
     def run(self):
         fails = 0
@@ -391,12 +427,14 @@ class Worker(threading.Thread):
 # ---------------------------------------------------------------- display
 
 class Display:
-    def __init__(self, size, mode_name, vsync, state, stats, focus_target=None):
+    def __init__(self, size, mode_name, vsync, state, stats, focus_target=None, sharp_scaling=True, fix_709=False):
         """focus_target: window that must keep the keyboard/controller focus (PS Remote Play). Capture Smooth then
         stays on top without ever taking the focus, and reads its keys directly from the keyboard."""
         self.W, self.H = size
         self.state, self.stats = state, stats
         self.focus_target = focus_target
+        self.sharp_scaling = sharp_scaling  # F key: Catmull-Rom scaling, or plain bilinear to compare
+        self.fix_709 = fix_709              # C key: BT.709 colours for a capture card
         self.keys_down = set()
         self.queue = collections.deque()
         self.cond = threading.Condition()
@@ -437,8 +475,16 @@ class Display:
         glBindTexture(GL_TEXTURE_2D, self.tex)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)  # scaling reads past the edges
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, self.W, self.H, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
+        try:
+            from present import Presenter
+            self.presenter = Presenter()
+        except Exception as e:  # very old driver: hardware bilinear, no colour fix
+            print(f"(mise à l'échelle fine indisponible : {e})")
+            self.presenter = None
 
         # Small on-screen counter (top-left), toggled with F1 or I.
         self.snapshot = None  # (path, time): save one displayed frame, for checking the app
@@ -510,7 +556,7 @@ class Display:
 
     # Virtual-key codes read in Remote Play mode (the keyboard focus stays with Remote Play).
     GLOBAL_KEYS = {0x1B: "quit", 0x70: "counter", 0x49: "counter", 0x4D: "mute", 0x20: "ai", 0x53: "sharp",
-                   0x48: "hud", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
+                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
 
     def poll_global_keys(self):
         import ctypes
@@ -530,6 +576,7 @@ class Display:
             return
         names = {glfw.KEY_ESCAPE: "quit", glfw.KEY_F1: "counter", glfw.KEY_I: "counter", glfw.KEY_M: "mute",
                  glfw.KEY_SEMICOLON: "mute", glfw.KEY_SPACE: "ai", glfw.KEY_S: "sharp", glfw.KEY_H: "hud",
+                 glfw.KEY_F: "scaling", glfw.KEY_C: "color",
                  glfw.KEY_2: 2, glfw.KEY_3: 3, glfw.KEY_4: 4, glfw.KEY_KP_2: 2, glfw.KEY_KP_3: 3, glfw.KEY_KP_4: 4}
         if key in names:  # M sits on ";" with an AZERTY keyboard
             self.act(names[key])
@@ -554,6 +601,12 @@ class Display:
         elif key == "hud":
             self.state.hud = not self.state.hud
             print(f"\nProtection du HUD {'ACTIVÉE' if self.state.hud else 'DÉSACTIVÉE'}")
+        elif key == "scaling":
+            self.sharp_scaling = not self.sharp_scaling
+            print(f"\nMise à l'échelle {'FINE (Catmull-Rom)' if self.sharp_scaling else 'BILINÉAIRE (ancienne)'}")
+        elif key == "color":
+            self.fix_709 = not self.fix_709
+            print(f"\nCouleurs {'BT.709 (HD)' if self.fix_709 else 'BT.601 (Windows)'}")
         elif key in (2, 3, 4):
             self.state.mult = key
             print(f"\nMultiplicateur x{self.state.mult}")
@@ -620,7 +673,11 @@ class Display:
             self.interop.upload(img.tensor.data_ptr(), self.W, self.H)
         else:
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.W, self.H, GL_RGBA, GL_UNSIGNED_BYTE, img)  # RGBA: 5x faster than BGR
+        if self.presenter:
+            self.presenter.begin(self.W, self.H, vw, vh, self.sharp_scaling, self.fix_709)
         self.draw_quad()
+        if self.presenter:
+            self.presenter.end()
         self.draw_overlay(ix, iy, vw, vh)
         if self.snapshot and now() >= self.snapshot[1]:
             from OpenGL.GL import GL_RGB, glReadPixels
@@ -766,6 +823,10 @@ def main():
     ap.add_argument("--nettete", type=int, default=30, help="netteté de 0 à 100 (défaut 30, touche S)")
     ap.add_argument("--no-hud", action="store_true", help="sans protection du HUD (touche H)")
     ap.add_argument("--no-cut", action="store_true", help="interpole aussi sur les changements de plan")
+    ap.add_argument("--bilineaire", action="store_true",
+                    help="ancienne mise à l'échelle vers l'écran, plus floue (touche F pour comparer)")
+    ap.add_argument("--couleurs", choices=["auto", "709", "601"], default="auto",
+                    help="matrice de couleurs du boîtier : auto = BT.709 si format non compressé en HD (touche C)")
     if len(sys.argv) == 1:  # double-click on the .exe: settings window
         from launcher import choose
         chosen = choose(APP)
@@ -812,7 +873,9 @@ def main():
     else:
         idx, name = pick_device(args.device)
         src = CaptureSource(idx, w, h, args.fps)
-        print(f"Source : {name} en {src.size[0]}x{src.size[1]} à {src.fps:.0f} fps")
+        print(f"Source : {name} en {src.size[0]}x{src.size[1]} à {src.fps:.0f} fps, format {src.format}")
+        if src.format not in CaptureSource.UNCOMPRESSED:
+            print("  (format compressé : le boîtier ne passe pas cette résolution et ces fps sans compression)")
         if src.size != (w, h):
             print(f"  (le boîtier a refusé {w}x{h} : vérifie la résolution de sortie de la console)")
 
@@ -823,7 +886,9 @@ def main():
     print(f"{APP} {VERSION} — préparation de l'IA…")
     state = State(args.x, max(0, min(args.nettete, 100)) / 100, not args.no_hud, not args.no_cut)
     stats = Stats()
-    display = Display(work, "fenetre" if args.windowed else args.mode, args.vsync, state, stats, focus_target)
+    fix_709 = args.couleurs == "709" or (args.couleurs == "auto" and getattr(src, "needs_709", False))
+    display = Display(work, "fenetre" if args.windowed else args.mode, args.vsync, state, stats, focus_target,
+                      sharp_scaling=not args.bilineaire, fix_709=fix_709)
     display.show_message(f"{APP} {VERSION}", "Preparation de l'IA...")
     # The AI warms up in the background (a few seconds) while the window keeps answering Windows.
     built = {}
@@ -866,7 +931,8 @@ def main():
             print(f"Son : désactivé ({e})")
     display.audio = audio
     display.overlay_on = not args.hide_counter
-    print("Échap = quitter · Espace = IA on/off · 2/3/4 = multiplicateur · S = netteté · H = HUD · F1 = compteur · M = son\n")
+    print("Échap = quitter · Espace = IA on/off · 2/3/4 = multiplicateur · S = netteté · H = HUD · F1 = compteur · M = son\n"
+          "F = mise à l'échelle fine/bilinéaire · C = couleurs BT.709/BT.601\n")
 
     def report():
         while state.running:
