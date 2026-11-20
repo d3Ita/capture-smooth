@@ -15,7 +15,7 @@ function Find-Venv($n) {
 $onnx = @("--add-data", "models\rife46_1920x1080_s100.onnx;models", "--add-data", "models\rife46_1920x1080_s50.onnx;models",
           "--add-data", "models\rife46_2560x1440_s50.onnx;models", "--add-data", "models\post_1920x1080.onnx;models",
           "--add-data", "models\post_2560x1440.onnx;models")
-$common = @("--noconfirm", "--clean", "--console", "--distpath", "dist", "--workpath", "build",
+$common = @("--noconfirm", "--clean", "--noconsole", "--version-file", "version_info.txt", "--distpath", "dist", "--workpath", "build",
             "--collect-binaries", "glfw", "--collect-all", "windows_capture", "--exclude-module", "matplotlib", "--add-data", "assets\icon.ico;assets",
             "--icon", "assets\icon.ico")
 
@@ -53,4 +53,11 @@ if ($Only -ne "DirectML") {
         smooth.py
     if ($LASTEXITCODE) { throw "build NVIDIA" }
     Finish "CaptureSmooth-NVIDIA"
+}
+
+# Installers (Inno Setup 6): dist\installer\CaptureSmooth-<version>-<edition>-Setup.exe
+if ($Zip) {
+    $iscc = Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"
+    if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+    foreach ($e in "DirectML", "NVIDIA") { & $iscc /Q "/DEdition=$e" installer\CaptureSmooth.iss }
 }

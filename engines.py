@@ -75,6 +75,14 @@ class FrameCache:
         return entry[key]
 
 
+class GpuFrame:
+    """A displayed frame that stays on the graphics card (CUDA -> OpenGL interop), ready once event is done."""
+    __slots__ = ("tensor", "event")
+
+    def __init__(self, tensor, event):
+        self.tensor, self.event = tensor, event
+
+
 class CudaEngine:
     name = "CUDA"
 
@@ -121,7 +129,28 @@ class CudaEngine:
         self.ring = [torch.full((self.H, self.W, 4), 255, dtype=torch.uint8).pin_memory() for _ in range(10)]
         self.ri = 0
         self.rgba = torch.full((self.H, self.W, 4), 255, device="cuda", dtype=torch.uint8)
+        self.gpu_frames = False  # set by the display when it can take frames straight from the GPU
+        self.gring = None
+        self.gi = 0
         self.ctx = torch.inference_mode()
+
+    def use_gpu_frames(self):
+        """Frames are handed to the display on the GPU (no download): a ring of RGBA buffers, more than the
+        display queue can hold."""
+        torch = self.torch
+        self.gring = [torch.full((self.H, self.W, 4), 255, device="cuda", dtype=torch.uint8) for _ in range(12)]
+        self.gpu_frames = True
+
+    def emit(self, rgba):
+        """The frame for the display: a GPU frame (interop) or bytes in PC memory."""
+        if not self.gpu_frames:
+            return self.download(rgba)
+        buf = self.gring[self.gi]
+        self.gi = (self.gi + 1) % len(self.gring)
+        buf.copy_(rgba)
+        ev = self.torch.cuda.Event()
+        ev.record()
+        return GpuFrame(buf, ev)
 
     def thread_init(self):
         """Called by the worker thread before using the engine."""
@@ -235,12 +264,12 @@ class CudaEngine:
         if t in self.graphs:
             g, out = self.graphs[t]
             g.replay()
-            return self.download(out)
+            return self.emit(out)
         mid = self.net(self.slot0, self.slot1, self.timestep(t), self.scale)
-        return self.download(self.rgba_into(mid, self.rgba, True))
+        return self.emit(self.rgba_into(mid, self.rgba, True))
 
     def real(self, cur):
-        return self.download(self.rgba_into(cur, self.rgba))
+        return self.emit(self.rgba_into(cur, self.rgba))
 
 
 def onnx_name(w, h, scale):

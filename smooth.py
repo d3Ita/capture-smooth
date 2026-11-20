@@ -9,6 +9,8 @@ Keys while running:
 """
 import argparse
 import collections
+import os
+from pathlib import Path
 import sys
 import threading
 import time
@@ -26,7 +28,7 @@ from OpenGL.GL import (
 )
 
 APP = "Capture Smooth"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 RES = {"1080p": (1920, 1080), "1440p": (2560, 1440), "4k": (3840, 2160)}
 now = time.perf_counter
@@ -251,7 +253,7 @@ class TestSource(Source):
         cv2.rectangle(f, (w - x - 60, h // 4 - 60), (w - x + 60, h // 4 + 60), (255, 120, 60), -1)
         y = int((np.sin(t * 2.5) * 0.4 + 0.5) * h)
         cv2.rectangle(f, (0, y - 6), (w, y + 6), (200, 200, 200), -1)
-        cv2.putText(f, f"IMAGE DE TEST {t:6.1f}s", (w // 2 - 330, 90), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (255, 255, 255), 4)
+        cv2.putText(f, f"IMAGE DE TEST {t:6.1f}s", (w - 780, 90), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (255, 255, 255), 4)
         cv2.putText(f, "Ce n'est pas la console. Pour jouer : Echap, puis 'Lancer le jeu'.", (40, h - 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.1, (120, 230, 255), 2)
         return f
@@ -367,6 +369,8 @@ class Worker(threading.Thread):
                     break  # the next game frame is due: drop the remaining in-betweens to keep latency down
                 t0 = now()
                 img = eng.interp(i / k)
+                if hasattr(img, "event"):  # GPU frame: wait until it is really computed, for honest pacing
+                    img.event.synchronize()
                 done = now()
                 ai_s = (done - t0) if ai_s == 0 else 0.8 * ai_s + 0.2 * (done - t0)
                 with self.stats.lock:
@@ -377,6 +381,8 @@ class Worker(threading.Thread):
                 self.display.push(img, base + (i - 1) * period / k, None)
             t0 = now()
             real = eng.real(cur)
+            if hasattr(real, "event"):
+                real.event.synchronize()
             real_s = 0.8 * real_s + 0.2 * (now() - t0)
             self.display.push(real, max(now(), base + (k - 1) * period / k), t_in)
             prev = cur
@@ -437,6 +443,7 @@ class Display:
         # Small on-screen counter (top-left), toggled with F1 or I.
         self.snapshot = None  # (path, time): save one displayed frame, for checking the app
         self.audio = None
+        self.interop = None
         self.overlay_on = True
         self.overlay_info = None
         self.overlay_ver = 0
@@ -551,6 +558,36 @@ class Display:
             self.state.mult = key
             print(f"\nMultiplicateur x{self.state.mult}")
 
+    def show_message(self, title, line):
+        """A black screen with a short text, while the AI gets ready."""
+        img = np.zeros((self.H, self.W, 4), np.uint8)
+        img[..., 3] = 255
+        s = self.H / 1080
+        for text, y, size, color in ((title, 0.46, 2.2, (255, 255, 255, 255)), (line, 0.56, 1.3, (200, 190, 255, 255))):
+            (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, size * s, max(2, int(3 * s)))
+            cv2.putText(img, text, ((self.W - tw) // 2, int(self.H * y)), cv2.FONT_HERSHEY_DUPLEX, size * s, color,
+                        max(2, int(3 * s)), cv2.LINE_AA)
+        fw, fh = glfw.get_framebuffer_size(self.win)
+        glViewport(0, 0, fw, fh)
+        glClear(GL_COLOR_BUFFER_BIT)
+        sc = min(fw / self.W, fh / self.H)
+        vw, vh = int(self.W * sc), int(self.H * sc)
+        glViewport((fw - vw) // 2, (fh - vh) // 2, vw, vh)
+        glBindTexture(GL_TEXTURE_2D, self.tex)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.W, self.H, GL_RGBA, GL_UNSIGNED_BYTE, img)
+        self.draw_quad()
+        glfw.swap_buffers(self.win)
+        glfw.poll_events()
+
+    def enable_interop(self):
+        """Frames from the CUDA engine go straight into the texture (see gl_interop.py)."""
+        from OpenGL.GL import GL_RENDERER, glGetString
+        if b"NVIDIA" not in (glGetString(GL_RENDERER) or b""):
+            raise RuntimeError("l'affichage ne passe pas par la carte NVIDIA")
+        from gl_interop import CudaGLTexture
+        glBindTexture(GL_TEXTURE_2D, self.tex)
+        self.interop = CudaGLTexture(int(self.tex))
+
     def push(self, img, target, t_in):
         with self.cond:
             self.queue.append((target, img, t_in))
@@ -578,7 +615,11 @@ class Display:
         vw, vh = int(self.W * s), int(self.H * s)
         ix, iy = (fw - vw) // 2, (fh - vh) // 2
         glViewport(ix, iy, vw, vh)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.W, self.H, GL_RGBA, GL_UNSIGNED_BYTE, img)  # RGBA: 5x faster than BGR
+        if hasattr(img, "event"):  # frame still on the GPU: straight into the texture
+            img.event.synchronize()
+            self.interop.upload(img.tensor.data_ptr(), self.W, self.H)
+        else:
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.W, self.H, GL_RGBA, GL_UNSIGNED_BYTE, img)  # RGBA: 5x faster than BGR
         self.draw_quad()
         self.draw_overlay(ix, iy, vw, vh)
         if self.snapshot and now() >= self.snapshot[1]:
@@ -690,7 +731,11 @@ def make_engine(kind, src_size, work, scale):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=f"{APP} : boîtier de capture + images intermédiaires par IA")
+    class Parser(argparse.ArgumentParser):
+        def error(self, msg):  # shown in a message box, not lost in a console the .exe does not have
+            raise RuntimeError(f"option invalide : {msg}")
+
+    ap = Parser(description=f"{APP} : boîtier de capture + images intermédiaires par IA")
     ap.add_argument("--res", choices=RES, default="1440p", help="résolution de capture (défaut 1440p)")
     ap.add_argument("--fps", type=int, default=60, help="fps de capture (défaut 60)")
     ap.add_argument("--x", type=int, choices=[2, 3, 4], default=2, help="multiplicateur d'images (défaut x2)")
@@ -717,6 +762,7 @@ def main():
     ap.add_argument("--no-audio", action="store_true", help="ne pas jouer le son du boîtier")
     ap.add_argument("--audio-delay", type=float, default=0, help="retarde le son de N ms si il arrive avant l'image")
     ap.add_argument("--hide-counter", action="store_true", help="démarre avec le compteur masqué (F1 l'affiche)")
+    ap.add_argument("--no-interop", action="store_true", help=argparse.SUPPRESS)  # frames through PC memory (debug)
     ap.add_argument("--nettete", type=int, default=30, help="netteté de 0 à 100 (défaut 30, touche S)")
     ap.add_argument("--no-hud", action="store_true", help="sans protection du HUD (touche H)")
     ap.add_argument("--no-cut", action="store_true", help="interpole aussi sur les changements de plan")
@@ -736,7 +782,7 @@ def main():
     if args.show_taskbar:
         from taskbar import show_taskbar
         show_taskbar()
-        print("Barre des tâches réaffichée.")
+        message("Barre des tâches réaffichée.")
         return
     if args.list:
         from devices import video_devices
@@ -775,10 +821,36 @@ def main():
     scale = 0.5 if (args.quality == "rapide" and work[1] >= 1440) else 1.0
 
     print(f"{APP} {VERSION} — préparation de l'IA…")
-    engine = make_engine(args.moteur, src.size, work, scale)
     state = State(args.x, max(0, min(args.nettete, 100)) / 100, not args.no_hud, not args.no_cut)
     stats = Stats()
     display = Display(work, "fenetre" if args.windowed else args.mode, args.vsync, state, stats, focus_target)
+    display.show_message(f"{APP} {VERSION}", "Preparation de l'IA...")
+    # The AI warms up in the background (a few seconds) while the window keeps answering Windows.
+    built = {}
+
+    def build():
+        try:
+            built["engine"] = make_engine(args.moteur, src.size, work, scale)
+        except Exception as e:
+            built["error"] = e
+
+    builder = threading.Thread(target=build, daemon=True)
+    builder.start()
+    while builder.is_alive():
+        glfw.poll_events()
+        time.sleep(0.03)
+    if "error" in built:
+        glfw.terminate()
+        from taskbar import show_taskbar
+        show_taskbar()
+        raise built["error"]
+    engine = built["engine"]
+    if engine.name == "CUDA" and not args.no_interop:
+        try:
+            display.enable_interop()
+            engine.use_gpu_frames()
+        except Exception as e:  # other GPU drives the screen, old driver...: frames go through PC memory
+            print(f"(affichage direct GPU indisponible, mode normal : {e})")
     worker = Worker(src, display, state, stats, engine)
     print(f"Prêt. Moteur {engine.name}, image {work[0]}x{work[1]}, IA échelle {scale}, x{args.x}, "
           f"écran {display.refresh} Hz.")
@@ -803,7 +875,11 @@ def main():
             line = (f"\rentrée {inp:3d} img/s (doublons {dups:3d}) | sortie {out:3d} img/s | "
                     f"IA {ai:4.1f} ms | retard ajouté ~{lat:4.1f} ms | sautées {dropped:3d}" +
                     (f" | changement de plan" if cuts else "") + "   ")
-            print(line, end="", flush=True)
+            if NO_CONSOLE:  # log file: one line every 10 s is enough
+                if int(now()) % 10 == 0:
+                    print(line.strip("\r "))
+            else:
+                print(line, end="", flush=True)
             # Text for the on-screen counter (plain ASCII: the OpenCV font has no accents).
             mode = (f"x{state.mult}" if state.mult_eff >= state.mult else f"x{state.mult_eff} auto") if state.on \
                 else "interpolation OFF"
@@ -848,24 +924,39 @@ def main():
     print("\nTerminé.")
 
 
-def pause_if_double_clicked():
-    """A double-clicked .exe closes its window at once: keep it open so the message can be read."""
-    if getattr(sys, "frozen", False) and sys.stdin and sys.stdin.isatty():
-        try:
-            input("\nAppuie sur Entrée pour fermer.")
-        except EOFError:
-            pass
+LOG = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "CaptureSmooth" / "capture-smooth.log"
+NO_CONSOLE = sys.stdout is None  # the .exe is built without a console window
+
+
+def setup_log():
+    """Without a console, everything printed goes to a log file (kept short: last run only)."""
+    if not NO_CONSOLE:
+        return
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        sys.stdout = sys.stderr = open(LOG, "w", encoding="utf-8", buffering=1)
+    except Exception:
+        sys.stdout = sys.stderr = open(os.devnull, "w")
+
+
+def message(text, error=False):
+    """A Windows message box (the .exe has no console to show text in)."""
+    print(text)
+    if NO_CONSOLE:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, text, APP, 0x10 if error else 0x40)
 
 
 if __name__ == "__main__":
+    setup_log()
     try:
         main()
     except RuntimeError as e:
-        print(f"Erreur : {e}")
-        pause_if_double_clicked()
+        msg = str(e)
+        message("Erreur : " + msg[:1].upper() + msg[1:], error=True)
         sys.exit(1)
     except Exception:
         import traceback
         traceback.print_exc()
-        pause_if_double_clicked()
+        message(f"Erreur inattendue. Les détails sont dans :\n{LOG}", error=True)
         sys.exit(1)
