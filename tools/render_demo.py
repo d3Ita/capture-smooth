@@ -119,15 +119,17 @@ def main():
     print(f"{len(frames)} images réelles chargées")
     ip = Interp(frames)
 
-    # Real time, 60 fps: the original holds each game frame for two video frames.
-    n_out = int(args.seconds * 60)
-    v = Video(out / "compare_60fps.mp4", 1920, 540)
-    for n in range(min(n_out, (len(frames) - 1) * 2)):
-        i, odd = divmod(n, 2)
-        v.write(side(frames[i], ip(i, 0.5 if odd else 0.0), "Original", "Capture Smooth",
-                     "30 fps", "60 fps (x2, AI frames in between)"))
-    v.close(out / "compare_60fps_poster.jpg")
-    print("compare_60fps.mp4")
+    # Real time at 60 fps (x2) and 90 fps (x3): the original holds each game frame for m video frames.
+    for m in (2, 3):
+        fps = GAME_FPS * m
+        n_out = int(args.seconds * fps)
+        v = Video(out / f"compare_{fps}fps.mp4", 1920, 540, fps=fps)
+        for n in range(min(n_out, (len(frames) - 1) * m)):
+            i, k = divmod(n, m)
+            v.write(side(frames[i], ip(i, k / m), "Original", "Capture Smooth",
+                         "30 fps", f"{fps} fps (x{m}, AI frames in between)"))
+        v.close(out / f"compare_{fps}fps_poster.jpg")
+        print(f"compare_{fps}fps.mp4")
 
     # Slow motion, 1/4 speed: 8 video frames per game frame.
     n_out = int(args.slow_seconds * GAME_FPS) * 8
