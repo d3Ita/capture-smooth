@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Capture Smooth</title>
+<meta name="description" content="Free AI frame generation for capture card feeds: 30 fps console games shown at 60 to 90 fps with low latency.">
+<link rel="icon" href="media/icon.png">
+<style>
+  :root {
+    --bg: #0d0f1a; --panel: #151829; --line: #262a43; --text: #e8eaf4; --muted: #9aa0bd;
+    --accent: #a98bff; --accent2: #6ec6ff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) { --bg: #f6f7fb; --panel: #ffffff; --line: #dde0ee; --text: #171a2b; --muted: #5b6080;
+      --accent: #6c4ce0; --accent2: #1a7fc4; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+  header img { width: 56px; height: 56px; }
+  h1 { font-size: clamp(28px, 5vw, 44px); margin: 0; letter-spacing: -0.02em; }
+  .tag { color: var(--muted); font-size: 18px; margin: 4px 0 24px; max-width: 760px; }
+  .tag b { color: var(--text); }
+  .btns { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 40px; }
+  .btn { display: inline-block; padding: 11px 20px; border-radius: 10px; text-decoration: none; font-weight: 600;
+    border: 1px solid var(--line); color: var(--text); background: var(--panel); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  h2 { font-size: 24px; margin: 48px 0 8px; }
+  p.note { color: var(--muted); margin: 0 0 14px; }
+  video, .strip { width: 100%; border-radius: 12px; border: 1px solid var(--line); background: #000; display: block; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 8px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .stat .big { font-size: 30px; font-weight: 700; color: var(--accent); }
+  .stat .lbl { color: var(--muted); font-size: 14px; }
+  ol { padding-left: 20px; }
+  ol li { margin: 6px 0; }
+  code { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: 14px; }
+  .flow { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px;
+    overflow-x: auto; font: 14px/1.5 ui-monospace, Consolas, monospace; white-space: pre; color: var(--muted); }
+  footer { margin-top: 56px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+  footer a, main a:not(.btn) { color: var(--accent2); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="media/icon.png" alt="">
+    <h1>Capture Smooth</h1>
+  </header>
+  <p class="tag">Free, open-source <b>AI frame generation for a capture card feed</b>. Plug your console into a capture card: Capture Smooth adds AI frames between the real ones on your PC's graphics card. <b>A 30 fps game is shown at 60 or 90 fps</b>, and a 60 fps game at 120 fps, with low added latency.</p>
+  <div class="btns">
+    <a class="btn primary" href="https://github.com/d3Ita/capture-smooth/releases/latest">Download for Windows</a>
+    <a class="btn" href="https://github.com/d3Ita/capture-smooth">Source code</a>
+  </div>
+
+  <h2>Side by side, real time</h2>
+  <p class="note">Left: what the console sends (30 fps). Right: with Capture Smooth at x2 (60 fps). This video is 60 fps; the app itself goes up to 90 or 120 fps on a high refresh screen.</p>
+  <video src="media/compare_60fps.mp4" poster="media/compare_60fps_poster.jpg" autoplay muted loop playsinline controls></video>
+
+  <h2>Slow motion (1/4 speed)</h2>
+  <p class="note">Slowed down, the difference is visible on any screen: the original repeats each game frame, Capture Smooth fills the gap with AI frames.</p>
+  <video src="media/compare_slowmo.mp4" poster="media/compare_slowmo_poster.jpg" autoplay muted loop playsinline controls></video>
+
+  <h2>What the AI adds</h2>
+  <p class="note">Two consecutive real frames from the game, and the two frames Capture Smooth generates between them at x3.</p>
+  <img class="strip" src="media/frames.jpg" alt="Real frame, two AI-generated frames, next real frame">
+
+  <h2>Measured</h2>
+  <p class="note">RTX 4070 SUPER, console output in 4K, captured at 1440p.</p>
+  <div class="stats">
+    <div class="stat"><div class="big">30 → 90 fps</div><div class="lbl">x3, about 32 ms added latency (CUDA)</div></div>
+    <div class="stat"><div class="big">30 → 60 fps</div><div class="lbl">x2, about 26 ms added latency</div></div>
+    <div class="stat"><div class="big">60 → 120 fps</div><div class="lbl">x2, about 19 ms added latency</div></div>
+    <div class="stat"><div class="big">7 ms</div><div class="lbl">per AI frame at 1440p (CUDA). About 15 ms with DirectML on any GPU</div></div>
+  </div>
+
+  <h2>How it works</h2>
+  <div class="flow">console ──HDMI──▶ capture card ──USB──▶ PC
+   capture ▶ skip duplicated frames ▶ RIFE 4.6 on the GPU ▶ evenly paced display
+                                       └ sound passthrough ▶ speakers</div>
+  <ol>
+    <li><b>Duplicates removed.</b> A 30 fps game in a 60 Hz signal sends every frame twice. Copies are detected and skipped, so AI frames are only made between real game frames.</li>
+    <li><b>RIFE 4.6</b> estimates the motion between two frames and builds the in-between ones. Unlike DLSS 3, it needs nothing from the game engine, so it works on any video.</li>
+    <li><b>Low latency.</b> The motion is estimated at half resolution, the whole AI step runs as a single CUDA graph, and late frames are dropped instead of queued.</li>
+  </ol>
+
+  <h2>Get started</h2>
+  <ol>
+    <li>Download the <a href="https://github.com/d3Ita/capture-smooth/releases/latest">latest release</a>: NVIDIA (fastest, two zip parts to extract in the same folder) or DirectML (any DirectX 12 GPU).</li>
+    <li>Close OBS and your capture card's software.</li>
+    <li>Double-click the exe, pick your console's output resolution and the game's frame rate, then press <b>Lancer</b>.</li>
+  </ol>
+  <p class="note">Keys: Esc quit · Space AI on/off · 2 / 3 / 4 multiplier · F1 counter · M sound. Full guide in the <a href="https://github.com/d3Ita/capture-smooth#readme">README</a>.</p>
+
+  <footer>
+    Capture Smooth is free software (MIT). RIFE by hzwer et al. (MIT). Not affiliated with Sony, Microsoft, Nintendo, Elgato, Rockstar Games or NVIDIA.
+    Gameplay footage: Grand Theft Auto VI © Rockstar Games, shown only to demonstrate the software.
+  </footer>
+</main>
+</body>
+</html>

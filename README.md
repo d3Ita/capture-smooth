@@ -2,9 +2,15 @@
 
 Free, open-source frame generation for a **capture card feed**: plug a console into a capture card, and Capture Smooth shows it full screen on your PC with **AI-generated in-between frames** (RIFE 4.6). A 30 fps game becomes 60 or 90 fps, and a 60 fps game becomes 120 fps, with low added latency.
 
-*[Version française plus bas.](#français)*
+**▶ [See the before/after videos](https://d3ita.github.io/capture-smooth/)** · **[Download for Windows](../../releases/latest)** · *[Version française plus bas.](#français)*
 
-> Not affiliated with Sony, Microsoft, Nintendo, Elgato, Rockstar Games or NVIDIA. Product names are only used to describe compatibility.
+[![Real frame, two AI frames, next real frame](docs/media/frames.jpg)](https://d3ita.github.io/capture-smooth/)
+
+*Two consecutive real frames from a 30 fps game, and the two frames Capture Smooth generates between them (x3 → 90 fps).*
+
+[![Side by side: original 30 fps and Capture Smooth 60 fps](docs/media/compare_60fps_poster.jpg)](https://d3ita.github.io/capture-smooth/)
+
+> Not affiliated with Sony, Microsoft, Nintendo, Elgato, Rockstar Games or NVIDIA. Product names are only used to describe compatibility. Gameplay footage: Grand Theft Auto VI © Rockstar Games, shown only to demonstrate the software.
 
 ## What it does
 
