@@ -6,9 +6,11 @@
 Common interface:
     upload(frame)        -> handle for one captured frame
     is_dup(prev, cur)    -> True if cur is a copy of prev (30 fps game in a 60 Hz signal, still image)
+    tiny(handle)         -> 32x18 grayscale thumbnail (float32 numpy), for scene-cut detection
+    set_options(sharpness, hud)  -> sharpening amount (0-1) and HUD protection on/off
     set_pair(prev, cur)  -> the two frames the next in-betweens are made from
     interp(t)            -> in-between frame at time t in (0, 1), RGBA numpy array
-    real(cur)            -> the captured frame itself, RGBA numpy array
+    real(cur)            -> the captured frame itself (sharpened like the others), RGBA numpy array
 """
 import os
 import sys
@@ -25,6 +27,9 @@ import numpy as np
 DUP_REDUCE = 8
 DUP_LEVEL = 3
 DUP_SHARE = 4e-5
+
+# HUD protection and sharpening: see post.py (shared with the ONNX export, so both engines look the same).
+SHARP_MAX = 1.5  # same value as post.SHARP_MAX (post.py imports torch, which the DirectML build lacks)
 
 
 def small_gray(frame_bgr):
@@ -50,6 +55,21 @@ def app_dir():
 def padded(h, w, scale):
     pad = int(32 / scale)
     return (h + pad - 1) // pad * pad, (w + pad - 1) // pad * pad
+
+
+class FrameCache:
+    """Per-frame values computed once (reduced copies), kept for the last few frames only."""
+
+    def __init__(self, keep=3):
+        self.keep, self.items = keep, {}
+
+    def get(self, handle, key, fn):
+        entry = self.items.setdefault(id(handle), {"_ref": handle})  # the reference keeps the id unique
+        if key not in entry:
+            entry[key] = fn(handle)
+        while len(self.items) > self.keep:
+            self.items.pop(next(iter(self.items)))
+        return entry[key]
 
 
 class CudaEngine:
@@ -85,7 +105,13 @@ class CudaEngine:
         # Fixed input slots for the CUDA graphs (a graph always reads the same memory).
         self.slot0 = torch.zeros((1, 3, self.ph, self.pw), device="cuda", dtype=self.dtype)
         self.slot1 = torch.zeros_like(self.slot0)
+        # Options live in GPU scalars, so the recorded graphs follow changes made while playing.
+        self.sharp = torch.zeros((), device="cuda", dtype=self.dtype)
+        self.hud = True
+        self.hudmask = torch.zeros((1, 1, self.H, self.W), device="cuda", dtype=self.dtype)  # per pair
+        self.opts = (None, None)
         self.tsteps = {}
+        self.cache = FrameCache()
         # Pinned output buffers, reused round-robin (more than the display queue can hold).
         self.ring = [torch.full((self.H, self.W, 4), 255, dtype=torch.uint8).pin_memory() for _ in range(10)]
         self.ri = 0
@@ -95,6 +121,12 @@ class CudaEngine:
     def thread_init(self):
         """Called by the worker thread before using the engine."""
         self.ctx.__enter__()
+
+    def set_options(self, sharpness, hud):
+        if (sharpness, hud) != self.opts:
+            self.sharp.fill_(float(sharpness) * SHARP_MAX)
+            self.hud = bool(hud)
+            self.opts = (sharpness, hud)
 
     def timestep(self, t):
         if t not in self.tsteps:
@@ -109,19 +141,36 @@ class CudaEngine:
             x = self.F.interpolate(x, size=(self.H, self.W), mode="bilinear", antialias=True, align_corners=False)
         return self.F.pad(x, (0, self.pw - self.W, 0, self.ph - self.H), mode="replicate")
 
-    def small_gray(self, x):
+    def _small(self, x):
         """Same reduced grayscale copy as small_gray() on the CPU, computed on the GPU (0-255 scale)."""
         rgb = x[:, :, :self.H, :self.W].float()
         g = (rgb[:, 0:1] * 0.299 + rgb[:, 1:2] * 0.587 + rgb[:, 2:3] * 0.114) * 255
         return self.F.avg_pool2d(g, DUP_REDUCE)
 
+    def small(self, x):
+        return self.cache.get(x, "small", self._small)
+
     def is_dup(self, prev, cur):
-        d = (self.small_gray(cur) - self.small_gray(prev)).abs()
+        d = (self.small(cur) - self.small(prev)).abs()
         return (d >= DUP_LEVEL - 0.5).float().mean().item() < DUP_SHARE
 
-    def rgba_into(self, x, out):
+    def tiny(self, x):
+        return self.cache.get(x, "tiny", lambda h: self.F.adaptive_avg_pool2d(self.small(h), (18, 32))[0, 0]
+                              .cpu().numpy())
+
+    def finish(self, x, protect):
+        """Crop, HUD protection (in-betweens only), sharpening: the frame as it will be shown, 0-1 RGB."""
+        from post import sharpen
+        x = x[:, :, :self.H, :self.W]
+        if protect:  # the mask was computed once for this pair, in set_pair
+            b = self.slot1[:, :, :self.H, :self.W]
+            x = x + (b - x) * self.hudmask
+        return sharpen(x, self.sharp)
+
+    def rgba_into(self, x, out, protect=False):
         """Padded RGB (0-1) -> RGBA bytes (alpha already 255), on the GPU."""
-        out[..., :3].copy_(x[0, :, :self.H, :self.W].mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0))
+        y = self.finish(x, protect)[0]
+        out[..., :3].copy_(y.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0))
         return out
 
     def download(self, rgba):
@@ -131,8 +180,8 @@ class CudaEngine:
         return buf.numpy()
 
     def capture_graph(self, t):
-        """Records a whole in-between frame (network + RGBA conversion) as one CUDA graph: a single launch
-        instead of a few hundred small ones."""
+        """Records a whole in-between frame (network + HUD protection + sharpening + RGBA conversion) as one
+        CUDA graph: a single launch instead of a few hundred small ones."""
         torch = self.torch
         out = torch.full((self.H, self.W, 4), 255, device="cuda", dtype=torch.uint8)
         ts = self.timestep(t)
@@ -140,11 +189,11 @@ class CudaEngine:
         s.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(s):
             for _ in range(3):
-                self.rgba_into(self.net(self.slot0, self.slot1, ts, self.scale), out)
+                self.rgba_into(self.net(self.slot0, self.slot1, ts, self.scale), out, True)
         torch.cuda.current_stream().wait_stream(s)
         g = torch.cuda.CUDAGraph()
         with torch.cuda.graph(g):
-            self.rgba_into(self.net(self.slot0, self.slot1, ts, self.scale), out)
+            self.rgba_into(self.net(self.slot0, self.slot1, ts, self.scale), out, True)
         self.graphs[t] = (g, out)
 
     def warmup(self):
@@ -163,8 +212,13 @@ class CudaEngine:
         torch.cuda.synchronize()
 
     def set_pair(self, prev, cur):
+        from post import hud_mask
         self.slot0.copy_(prev)
         self.slot1.copy_(cur)
+        if self.hud:
+            self.hudmask.copy_(hud_mask(prev[:, :, :self.H, :self.W], cur[:, :, :self.H, :self.W]))
+        else:
+            self.hudmask.zero_()
 
     def interp(self, t):
         if t in self.graphs:
@@ -172,7 +226,7 @@ class CudaEngine:
             g.replay()
             return self.download(out)
         mid = self.net(self.slot0, self.slot1, self.timestep(t), self.scale)
-        return self.download(self.rgba_into(mid, self.rgba))
+        return self.download(self.rgba_into(mid, self.rgba, True))
 
     def real(self, cur):
         return self.download(self.rgba_into(cur, self.rgba))
@@ -182,9 +236,13 @@ def onnx_name(w, h, scale):
     return f"rife46_{w}x{h}_s{int(scale * 100)}.onnx"
 
 
+def post_name(w, h):
+    return f"post_{w}x{h}.onnx"
+
+
 class DmlEngine:
-    """The ONNX model takes the two BGR frames as bytes and returns the in-between as RGBA bytes: colour
-    conversion, padding and the network all run on the graphics card."""
+    """The ONNX models take BGR frames as bytes and return RGBA bytes: colour conversion, padding, the
+    network, HUD protection and sharpening all run on the graphics card (see tools/export_onnx.py)."""
     name = "DirectML"
 
     def __init__(self, src_size, work_size, scale):
@@ -194,9 +252,10 @@ class DmlEngine:
         self.W, self.H = work_size
         self.scale = scale
         self.resize = src_size != work_size
-        path = app_dir() / "models" / onnx_name(self.W, self.H, scale)
+        models = app_dir() / "models"
+        path = models / onnx_name(self.W, self.H, scale)
         if not path.exists():
-            have = ", ".join(p.name for p in (app_dir() / "models").glob("*.onnx")) or "aucun"
+            have = ", ".join(p.name for p in models.glob("rife*.onnx")) or "aucun"
             raise RuntimeError(f"Modèle {path.name} introuvable (modèles présents : {have}). "
                                "Utilise --res 1080p ou 1440p.")
         opts = ort.SessionOptions()
@@ -206,11 +265,19 @@ class DmlEngine:
         self.sess = ort.InferenceSession(str(path), opts, providers=["DmlExecutionProvider"])
         if "DmlExecutionProvider" not in self.sess.get_providers():
             raise RuntimeError("DirectML indisponible sur cette machine.")
+        self.post = ort.InferenceSession(str(models / post_name(self.W, self.H)), opts,
+                                         providers=["DmlExecutionProvider"])
         self.pair = None
         self.tvals = {}
+        self.cache = FrameCache()
+        self.set_options(0.0, True)
 
     def thread_init(self):
         pass
+
+    def set_options(self, sharpness, hud):
+        self.sharp = np.array([float(sharpness) * SHARP_MAX], np.float32)
+        self.hud = np.array([1.0 if hud else 0.0], np.float32)
 
     def upload(self, frame):
         if self.resize:
@@ -218,22 +285,18 @@ class DmlEngine:
         return np.ascontiguousarray(frame)
 
     def is_dup(self, prev, cur):
-        # The reduced copy of each frame is computed once and reused for the next comparison.
-        cache = self.__dict__.setdefault("_small", {})
-        smalls = []
-        for f in (prev, cur):
-            if id(f) not in cache:
-                cache[id(f)] = (f, small_gray(f))  # keep f referenced so its id is not reused
-            smalls.append(cache[id(f)][1])
-        for k in [k for k in cache if k not in (id(prev), id(cur))]:
-            del cache[k]
-        return dup_cpu(*smalls)
+        return dup_cpu(self.cache.get(prev, "small", small_gray), self.cache.get(cur, "small", small_gray))
+
+    def tiny(self, f):
+        return self.cache.get(f, "tiny", lambda h: cv2.resize(self.cache.get(h, "small", small_gray), (32, 18),
+                                                              interpolation=cv2.INTER_AREA).astype(np.float32))
 
     def warmup(self):
         f = np.zeros((self.H, self.W, 3), np.uint8)
         self.set_pair(f, f)
         for t in (0.5, 0.5, 0.5):
             self.interp(t)
+        self.real(f)
 
     def set_pair(self, prev, cur):
         self.pair = (prev, cur)
@@ -242,7 +305,8 @@ class DmlEngine:
         if t not in self.tvals:
             self.tvals[t] = np.array([t], np.float16)
         f0, f1 = self.pair
-        return self.sess.run(None, {"frame0": f0, "frame1": f1, "t": self.tvals[t]})[0]
+        return self.sess.run(None, {"frame0": f0, "frame1": f1, "t": self.tvals[t],
+                                    "sharp": self.sharp, "hud": self.hud})[0]
 
     def real(self, cur):
-        return cv2.cvtColor(cur, cv2.COLOR_BGR2RGBA)
+        return self.post.run(None, {"frame": cur, "sharp": self.sharp})[0]

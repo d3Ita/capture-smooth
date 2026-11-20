@@ -13,7 +13,8 @@ function Find-Venv($n) {
     throw "environnement $n introuvable"
 }
 $onnx = @("--add-data", "models\rife46_1920x1080_s100.onnx;models", "--add-data", "models\rife46_1920x1080_s50.onnx;models",
-          "--add-data", "models\rife46_2560x1440_s50.onnx;models")
+          "--add-data", "models\rife46_2560x1440_s50.onnx;models", "--add-data", "models\post_1920x1080.onnx;models",
+          "--add-data", "models\post_2560x1440.onnx;models")
 $common = @("--noconfirm", "--clean", "--console", "--distpath", "dist", "--workpath", "build",
             "--collect-binaries", "glfw", "--exclude-module", "matplotlib", "--add-data", "assets\icon.ico;assets",
             "--icon", "assets\icon.ico")

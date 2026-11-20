@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 SETTINGS = Path(os.environ.get("APPDATA", Path.home())) / "CaptureSmooth" / "settings.json"
-DEFAULTS = {"res": "1440p", "game": "30", "mult": "max", "audio": True, "counter": True}
+DEFAULTS = {"res": "1440p", "game": "30", "mult": "max", "audio": True, "counter": True, "sharp": 30, "hud": True}
 
 
 def load():
@@ -35,6 +35,9 @@ def to_args(s, test=False):
         args.append("--no-audio")
     if not s["counter"]:
         args.append("--hide-counter")
+    args += ["--nettete", str(int(s["sharp"]))]
+    if not s["hud"]:
+        args.append("--no-hud")
     if test:
         args += ["--test", "--windowed", "--test-game-fps", str(game)]
     return args
@@ -92,17 +95,35 @@ def choose(title="Capture Smooth"):
         v.trace_add("write", update_hint)
     update_hint()
 
+    box = ttk.LabelFrame(frm, text=" Image ", padding=8)
+    box.grid(row=5, column=0, columnspan=2, sticky="ew", **pad)
+    sharp = tk.IntVar(value=int(s["sharp"]))
+    sharp_lbl = ttk.Label(box, width=14)
+    ttk.Label(box, text="Netteté").grid(row=0, column=0, sticky="w")
+    ttk.Scale(box, from_=0, to=100, variable=sharp, length=190,
+              command=lambda v: (sharp.set(round(float(v) / 5) * 5), upd_sharp())).grid(row=0, column=1, padx=10)
+    sharp_lbl.grid(row=0, column=2, sticky="w")
+
+    def upd_sharp(*_):
+        v = sharp.get()
+        sharp_lbl.config(text="désactivée" if v == 0 else f"{v} %" + ("  (conseillé)" if v == 30 else ""))
+
+    upd_sharp()
+    hud = tk.BooleanVar(value=s["hud"])
+    ttk.Checkbutton(box, text="Protéger le HUD (mini-carte, textes fixes)", variable=hud).grid(
+        row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
     audio = tk.BooleanVar(value=s["audio"])
     counter = tk.BooleanVar(value=s["counter"])
-    ttk.Checkbutton(frm, text="Son du boîtier", variable=audio).grid(row=5, column=0, sticky="w", **pad)
-    ttk.Checkbutton(frm, text="Compteur fps (F1)", variable=counter).grid(row=5, column=1, sticky="w", **pad)
+    ttk.Checkbutton(frm, text="Son du boîtier", variable=audio).grid(row=6, column=0, sticky="w", **pad)
+    ttk.Checkbutton(frm, text="Compteur fps (F1)", variable=counter).grid(row=6, column=1, sticky="w", **pad)
 
-    ttk.Label(frm, text="Ferme OBS avant de lancer.  Échap = quitter · Espace = IA on/off · M = son",
-              foreground="#666").grid(row=6, column=0, columnspan=2, sticky="w", padx=14, pady=(8, 4))
+    ttk.Label(frm, text="Ferme OBS avant de lancer.  Échap = quitter · Espace = IA on/off · S = netteté · M = son",
+              foreground="#666").grid(row=7, column=0, columnspan=2, sticky="w", padx=14, pady=(8, 4))
 
     def current():
         return {"res": res.get(), "game": game.get(), "mult": mult.get(), "audio": audio.get(),
-                "counter": counter.get()}
+                "counter": counter.get(), "sharp": sharp.get(), "hud": hud.get()}
 
     def go(test=False):
         c = current()
@@ -111,7 +132,7 @@ def choose(title="Capture Smooth"):
         root.destroy()
 
     btns = ttk.Frame(frm)
-    btns.grid(row=7, column=0, columnspan=2, sticky="ew", padx=14, pady=(8, 2))
+    btns.grid(row=8, column=0, columnspan=2, sticky="ew", padx=14, pady=(8, 2))
     start = ttk.Button(btns, text="Lancer", command=go)
     start.pack(side="right")
     ttk.Button(btns, text="Tester sans console", command=lambda: go(True)).pack(side="right", padx=8)

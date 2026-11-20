@@ -14,7 +14,8 @@ import torch.nn.functional as F
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from engines import onnx_name, padded  # noqa: E402
+from engines import onnx_name, padded, post_name  # noqa: E402
+from post import protect_hud, sharpen  # noqa: E402
 from rife import load_model  # noqa: E402
 
 SIZES = [(1920, 1080, 1.0), (1920, 1080, 0.5), (2560, 1440, 0.5)]
@@ -51,14 +52,32 @@ class Interp(nn.Module):
         x = f.permute(2, 0, 1).unsqueeze(0).index_select(1, self.bgr).half() / 255
         return F.pad(x, (0, self.pw - self.w, 0, self.ph - self.h), mode="replicate")
 
-    def forward(self, frame0, frame1, t):
+    def forward(self, frame0, frame1, t, sharp, hud):
         x0, x1 = self.prep(frame0), self.prep(frame1)
         sh, sw = int(self.ph * self.scale), int(self.pw * self.scale)
         ts = t.view(1, 1, 1, 1).expand(1, 1, sh, sw)
-        mid = self.net(x0, x1, ts, self.scale)[0, :, :self.h, :self.w]
-        rgb = (mid * 255 + 0.5).clamp(0, 255)
-        alpha = torch.full_like(rgb[:1], 255)
-        return torch.cat((rgb, alpha), 0).permute(1, 2, 0).to(torch.uint8)
+        mid = self.net(x0, x1, ts, self.scale)[:, :, :self.h, :self.w]
+        a, b = x0[:, :, :self.h, :self.w], x1[:, :, :self.h, :self.w]
+        y = sharpen(protect_hud(mid, a, b, hud.view(1, 1, 1, 1).half()), sharp.view(1, 1, 1, 1).half())
+        return to_rgba(y.float())
+
+
+def to_rgba(y):
+    rgb = (y[0] * 255 + 0.5).clamp(0, 255)
+    alpha = torch.full_like(rgb[:1], 255)
+    return torch.cat((rgb, alpha), 0).permute(1, 2, 0).to(torch.uint8)
+
+
+class Real(nn.Module):
+    """A captured frame as shown: BGR bytes -> sharpened RGBA bytes."""
+
+    def __init__(self):
+        super().__init__()
+        self.register_buffer("bgr", torch.tensor([2, 1, 0]))
+
+    def forward(self, frame, sharp):
+        x = frame.permute(2, 0, 1).unsqueeze(0).index_select(1, self.bgr).half() / 255
+        return to_rgba(sharpen(x, sharp.view(1, 1, 1, 1).half()).float())
 
 
 def main():
@@ -70,13 +89,22 @@ def main():
         f0 = torch.randint(0, 255, (h, w, 3), dtype=torch.uint8, device="cuda")
         f1 = torch.randint(0, 255, (h, w, 3), dtype=torch.uint8, device="cuda")
         t = torch.tensor([0.5], dtype=torch.half, device="cuda")
+        sharp = torch.tensor([0.45], dtype=torch.float32, device="cuda")
+        hud = torch.tensor([1.0], dtype=torch.float32, device="cuda")
         path = out_dir / onnx_name(w, h, scale)
         with torch.no_grad():
-            m(f0, f1, t)  # fills the warp grid cache for these sizes
-        torch.onnx.export(m, (f0, f1, t), str(path), input_names=["frame0", "frame1", "t"],
+            m(f0, f1, t, sharp, hud)  # fills the warp grid cache for these sizes
+        torch.onnx.export(m, (f0, f1, t, sharp, hud), str(path), input_names=["frame0", "frame1", "t", "sharp", "hud"],
                           output_names=["rgba"], opset_version=17, dynamo=False,
                           do_constant_folding=False)  # folding would store the full-size warp grids (100+ Mo)
         print(f"{path.name}: {path.stat().st_size / 1e6:.1f} Mo")
+    for w, h in sorted({(w, h) for w, h, _ in SIZES}):
+        path = out_dir / post_name(w, h)
+        f = torch.randint(0, 255, (h, w, 3), dtype=torch.uint8, device="cuda")
+        sharp = torch.tensor([0.45], dtype=torch.float32, device="cuda")
+        torch.onnx.export(Real().cuda().eval(), (f, sharp), str(path), input_names=["frame", "sharp"],
+                          output_names=["rgba"], opset_version=17, dynamo=False)
+        print(f"{path.name}: {path.stat().st_size / 1e6:.2f} Mo")
 
 
 if __name__ == "__main__":
