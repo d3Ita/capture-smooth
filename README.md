@@ -45,12 +45,14 @@ The added latency is mostly unavoidable. An in-between frame needs the *next* re
 
 Get the latest [release](../../releases):
 
-- **CaptureSmooth-NVIDIA**: fastest, for GeForce **RTX 20, 30, 40 and 50** series and **GTX 16** series, with a recent driver. It also contains the DirectML engine and switches to it by itself on any other card. The download is large (CUDA is included) and comes in **several zip parts: download them all and extract them into the same folder**.
-- **CaptureSmooth-DirectML**: about 110 MB, for any DirectX 12 graphics card (AMD Radeon, Intel Arc, older NVIDIA such as the GTX 10 series).
+- **NVIDIA** (fastest): for GeForce **RTX 20, 30, 40 and 50** series and **GTX 16** series, with a recent driver. It also contains the DirectML engine and switches to it by itself on any other card. CUDA is included, so the installer is large and comes in **3 files**: put `CaptureSmooth-<version>-NVIDIA-Setup.exe` and its two `.bin` files in the same folder, then run the Setup.exe.
+- **DirectML**: a single ~100 MB `Setup.exe`, for any DirectX 12 graphics card (AMD Radeon, Intel Arc, older NVIDIA such as the GTX 10 series).
+
+The installers need no administrator rights, add Start menu and desktop shortcuts, and uninstall from Windows settings.
 
 > **"Windows protected your PC"?** The exe is not code-signed (a certificate costs money), so Windows SmartScreen warns about it the first time. Click **More info → Run anyway**. The full source code is in this repository.
 
-Then **double-click `CaptureSmooth-NVIDIA.exe`** (or `CaptureSmooth-DirectML.exe`). A settings window opens. Choose:
+Then open **Capture Smooth** from the Start menu or the desktop. A settings window opens. Choose:
 
 - your console's output resolution (1440p or 4K, or 1080p),
 - the game's frame rate (30 or 60 fps),
@@ -129,12 +131,12 @@ Génération d'images gratuite et open source pour un **boîtier de capture** : 
 
 **Installation :** télécharge la [release](../../releases).
 
-- **CaptureSmooth-NVIDIA** : la plus rapide, pour les GeForce **RTX 20, 30, 40 et 50** et **GTX 16**. Sur une autre carte, elle passe toute seule au moteur DirectML. Elle vient en **plusieurs fichiers zip : télécharge-les tous et décompresse-les dans le même dossier**.
-- **CaptureSmooth-DirectML** : pour toutes les cartes graphiques (AMD Radeon, Intel Arc, anciennes NVIDIA comme les GTX 10).
+- **NVIDIA** : la plus rapide, pour les GeForce **RTX 20, 30, 40 et 50** et **GTX 16**. Sur une autre carte, elle passe toute seule au moteur DirectML. L'installateur fait **3 fichiers** : mets le `Setup.exe` et ses deux `.bin` dans le même dossier, puis lance le `Setup.exe`.
+- **DirectML** : un seul `Setup.exe` d'environ 100 Mo, pour toutes les cartes graphiques (AMD Radeon, Intel Arc, anciennes NVIDIA comme les GTX 10).
 
 > **« Windows a protégé votre ordinateur » ?** L'exe n'est pas signé (un certificat est payant), donc Windows SmartScreen prévient au premier lancement. Clique sur **Informations complémentaires → Exécuter quand même**. Tout le code source est dans ce dépôt.
 
-Ensuite, **double-clique sur l'exe**. Une fenêtre de réglages s'ouvre : choisis la sortie vidéo de la console, les fps du jeu, la fluidité ou la latence, puis clique sur **Lancer**. Tes choix sont mémorisés.
+Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. Une fenêtre de réglages s'ouvre : choisis la sortie vidéo de la console, les fps du jeu, la fluidité ou la latence, puis clique sur **Lancer**. Tes choix sont mémorisés.
 
 **Touches :** Échap quitter · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son
 
