@@ -41,26 +41,31 @@ Get the latest [release](../../releases):
 - **CaptureSmooth-NVIDIA**: fastest. Needs a GeForce GTX 10xx or newer with a recent driver. The download is large (CUDA is included) and comes in **two zip files: extract both into the same folder**.
 - **CaptureSmooth-DirectML**: about 100 MB, for any DirectX 12 graphics card.
 
-Then double-click the launcher that matches your console's output and your game:
+Then **double-click `CaptureSmooth-NVIDIA.exe`** (or `CaptureSmooth-DirectML.exe`). A settings window opens. Choose:
 
-| Launcher | Console output | Game | Displayed |
+- your console's output resolution (1440p or 4K, or 1080p),
+- the game's frame rate (30 or 60 fps),
+- smoothness or latency, sound, and the counter.
+
+Then press **Lancer**. Your choice is remembered. Options passed on the command line (below) skip the window.
+
+| Console output | Game | Smoothness first | Latency first |
 |---|---|---|---|
-| `Jeu 30 fps - 90 fps (console en 1440p ou 4K).cmd` | 1440p or 4K | 30 fps | 90 fps |
-| `Jeu 60 fps - 120 fps (console en 1440p ou 4K).cmd` | 1440p or 4K | 60 fps | 120 fps |
-| `Jeu 30 fps - 90 fps (console en 1080p).cmd` | 1080p | 30 fps | 90 fps |
-| `Jeu 60 fps - 120 fps (console en 1080p).cmd` | 1080p | 60 fps | 120 fps |
-| `Tester sans console.cmd` | none (test picture) | | |
+| 1440p or 4K | 30 fps | 90 fps | 60 fps |
+| 1440p or 4K | 60 fps | 120 fps | 120 fps |
+| 1080p | 30 fps | 90 fps | 60 fps |
+| 1080p | 60 fps | 120 fps | 120 fps |
 
 **Keys:** Esc quit · Space interpolation on/off · 2 / 3 / 4 multiplier · F1 or I counter · M sound
 
 ## Setup tips
 
 1. **Close OBS and your capture card's software** before starting, because they lock the device.
-2. **The capture card cannot upscale.** If you ask for 1440p while the console sends 1080p, you get a black screen or the card's "invalid resolution" picture. Use the launcher that matches the console output. A 4K console output works with the 1440p launchers, because the card downscales it.
+2. **The capture card cannot upscale.** If you ask for 1440p while the console sends 1080p, you get a black screen or the card's "invalid resolution" picture. Pick the resolution the console really outputs. A 4K output works with the "1440p or 4K" choice, because the card downscales it.
 3. **The console only offers resolutions supported by the screen on the card's HDMI passthrough.** If 1440p is refused, set the card's **EDID** to *internal* in its software, or plug a 1440p/4K screen into the passthrough.
 4. **HDR off** on the console.
 5. **G-Sync / FreeSync**: enable it for windowed mode too (NVIDIA Control Panel → Set up G-SYNC → windowed and full screen mode).
-6. If the sound comes before the picture, add `--audio-delay 30` (in ms) to the launcher.
+6. If the sound comes before the picture, start the exe with `--audio-delay 30` (in ms).
 
 ## Options
 
@@ -103,14 +108,14 @@ Génération d'images gratuite et open source pour un **boîtier de capture** : 
 - **CaptureSmooth-NVIDIA** : la plus rapide, pour les cartes NVIDIA. Elle vient en **deux fichiers zip : décompresse-les tous les deux dans le même dossier**.
 - **CaptureSmooth-DirectML** : pour toutes les cartes graphiques.
 
-Ensuite, double-clique sur le lanceur qui correspond à la sortie de ta console et à ton jeu (voir le tableau plus haut).
+Ensuite, **double-clique sur l'exe**. Une fenêtre de réglages s'ouvre : choisis la sortie vidéo de la console, les fps du jeu, la fluidité ou la latence, puis clique sur **Lancer**. Tes choix sont mémorisés.
 
 **Touches :** Échap quitter · Espace interpolation on/off · 2/3/4 multiplicateur · F1 ou I compteur · M son
 
 **À savoir :**
 
 - **Ferme OBS** et le logiciel du boîtier avant de lancer.
-- **Le boîtier ne peut pas agrandir l'image.** Choisis le lanceur qui correspond à la résolution de sortie de la console. En 4K, utilise un lanceur 1440p : le boîtier réduit l'image.
+- **Le boîtier ne peut pas agrandir l'image.** Choisis la résolution que la console envoie vraiment. En 4K, choisis « 1440p ou 4K » : le boîtier réduit l'image.
 - **Si la console refuse le 1440p** (« ton écran ne le prend pas en charge ») : dans le logiciel du boîtier, mets l'**EDID** sur *interne*, puis débranche et rebranche la console.
 - **HDR désactivé** sur la console.
 - **G-Sync** : active-le aussi pour le mode fenêtré.
