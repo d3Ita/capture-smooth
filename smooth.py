@@ -106,19 +106,55 @@ class Source(threading.Thread):
             return self.frame, self.t, self.seq
 
 
+# Programs that keep a capture card to themselves while they run.
+BLOCKERS = {"obs64": "OBS", "obs32": "OBS", "elgato studio": "Elgato Studio", "4kcaptureutility": "Elgato 4K Capture Utility",
+            "gamecapture": "Elgato Game Capture", "streamlabs obs": "Streamlabs", "streamlabs desktop": "Streamlabs",
+            "windowscamera": "l'appli Caméra de Windows", "xsplit.core": "XSplit", "recentral": "AVerMedia RECentral"}
+# Discord, Teams or Zoom are left out: they are often open without using the camera, and a wrong lead is
+# worse than none.
+
+
+def capture_blockers():
+    """Names of running programs that commonly hold a capture card."""
+    try:
+        import subprocess
+        out = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, text=True, timeout=5,
+                             creationflags=0x08000000).stdout.lower()  # no console window flash
+    except Exception:
+        return []
+    found = []
+    for exe, label in BLOCKERS.items():
+        if f'"{exe}.exe"' in out and label not in found:
+            found.append(label)
+    return found
+
+
 class CaptureSource(Source):
-    def __init__(self, index, w, h, fps):
+    def __init__(self, index, w, h, fps, tries=4):
         super().__init__()
-        self.cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        if not self.cap.isOpened():
-            raise RuntimeError("Impossible d'ouvrir le boîtier de capture. Ferme OBS et le logiciel du boîtier (ils le bloquent) puis relance.")
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-        self.cap.set(cv2.CAP_PROP_FPS, fps)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        ok, frame = self.cap.read()
-        if not ok:
-            raise RuntimeError("Le boîtier s'ouvre mais n'envoie pas d'image. Vérifie que la console est allumée et branchée.")
+        # The card can be busy for a moment (another program closing): retry for a few seconds.
+        for attempt in range(tries):
+            self.cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+            ok = self.cap.isOpened()
+            if ok:
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+                self.cap.set(cv2.CAP_PROP_FPS, fps)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                ok, frame = self.cap.read()
+            if ok:
+                break
+            self.cap.release()
+            if attempt < tries - 1:
+                print(f"Le boîtier ne répond pas, nouvel essai ({attempt + 2}/{tries})…")
+                time.sleep(1.5)
+        else:
+            who = capture_blockers()
+            if who:
+                raise RuntimeError("le boîtier de capture est occupé par " + ", ".join(who) + ". Ferme-le puis relance.")
+            raise RuntimeError("le boîtier de capture ne donne pas d'image. Vérifie que la console est allumée, "
+                               "que le câble USB est bien branché, et qu'aucun autre programme ne l'utilise "
+                               "(OBS, logiciel Elgato, appli Caméra, appel vidéo…).")
         self.size = (frame.shape[1], frame.shape[0])
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
 
@@ -501,6 +537,18 @@ def pick_device(wanted):
                        "Choisis-en un avec --device \"nom\".")
 
 
+_instance_lock = None
+
+
+def single_instance():
+    """False if another Capture Smooth already has the capture card (two windows would fight over it)."""
+    global _instance_lock
+    import ctypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _instance_lock = k32.CreateMutexW(None, False, "Local\\CaptureSmooth")
+    return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
+
+
 def make_engine(kind, src_size, work, scale):
     """CUDA if this card supports it, otherwise DirectML. Each engine is warmed up here, so a card that
     loads but cannot run the network still falls back instead of crashing later."""
@@ -570,6 +618,9 @@ def main():
         args = ap.parse_args(chosen)
     else:
         args = ap.parse_args()
+
+    if not (args.show_taskbar or args.list or args.test) and not single_instance():
+        raise RuntimeError("Capture Smooth est déjà ouvert : ferme l'autre fenêtre (Échap) avant d'en lancer une nouvelle.")
 
     if args.show_taskbar:
         from taskbar import show_taskbar
