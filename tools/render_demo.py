@@ -3,6 +3,8 @@
     python tools/render_demo.py --raw demo_raw --out docs/media
 
 Writes:
+  full_30fps.mp4 / full_90fps.mp4  the same scene, original and Capture Smooth x3, for the page's switch
+  split_90fps.mp4     one picture: left half original, right half Capture Smooth, 90 fps
   compare_60fps.mp4   side by side, real time: original 30 fps | Capture Smooth x2 (60 fps)
   compare_slowmo.mp4  side by side, 1/4 speed: original | x8, so the difference shows on any screen
   frames.jpg          real frame, two AI frames, next real frame (for the README)
@@ -119,17 +121,43 @@ def main():
     print(f"{len(frames)} images réelles chargées")
     ip = Interp(frames)
 
-    # Real time at 60 fps (x2) and 90 fps (x3): the original holds each game frame for m video frames.
-    for m in (2, 3):
-        fps = GAME_FPS * m
-        n_out = int(args.seconds * fps)
-        v = Video(out / f"compare_{fps}fps.mp4", 1920, 540, fps=fps)
-        for n in range(min(n_out, (len(frames) - 1) * m)):
-            i, k = divmod(n, m)
-            v.write(side(frames[i], ip(i, k / m), "Original", "Capture Smooth",
-                         "30 fps", f"{fps} fps (x{m}, AI frames in between)"))
-        v.close(out / f"compare_{fps}fps_poster.jpg")
-        print(f"compare_{fps}fps.mp4")
+    n_real = min(int(args.seconds * GAME_FPS), len(frames) - 1)
+
+    # Full frame, for the 30 / 90 switch on the page: the original as the console sends it (30 fps)
+    # and Capture Smooth x3 (90 fps). Same scene, same length, so the page can jump between them.
+    v = Video(out / "full_30fps.mp4", 1920, 1080, fps=30, crf=19)
+    for i in range(n_real):
+        v.write(frames[i])
+    v.close(out / "full_poster.jpg")
+    v = Video(out / "full_90fps.mp4", 1920, 1080, fps=90, crf=19)
+    for n in range(n_real * 3):
+        i, k = divmod(n, 3)
+        v.write(ip(i, k / 3))
+    v.close()
+    print("full_30fps.mp4, full_90fps.mp4")
+
+    # Split screen at 90 fps: left half original, right half Capture Smooth, on the same picture.
+    v = Video(out / "split_90fps.mp4", 1920, 1080, fps=90, crf=19)
+    for n in range(n_real * 3):
+        i, k = divmod(n, 3)
+        img = frames[i].copy()
+        img[:, 960:] = ip(i, k / 3)[:, 960:]
+        img[:, 958:962] = 255
+        label(img, "Original 30 fps")
+        cv2.putText(img, "Capture Smooth 90 fps", (984, 46), FONT, 1.1, (0, 0, 0), 6, cv2.LINE_AA)
+        cv2.putText(img, "Capture Smooth 90 fps", (984, 46), FONT, 1.1, (255, 255, 255), 2, cv2.LINE_AA)
+        v.write(img)
+    v.close(out / "split_90fps_poster.jpg")
+    print("split_90fps.mp4")
+
+    # Side by side at 60 fps (x2): visible on any screen.
+    v = Video(out / "compare_60fps.mp4", 1920, 540, fps=60)
+    for n in range(n_real * 2):
+        i, k = divmod(n, 2)
+        v.write(side(frames[i], ip(i, k / 2), "Original", "Capture Smooth",
+                     "30 fps", "60 fps (x2, AI frames in between)"))
+    v.close(out / "compare_60fps_poster.jpg")
+    print("compare_60fps.mp4")
 
     # Slow motion, 1/4 speed: 8 video frames per game frame.
     n_out = int(args.slow_seconds * GAME_FPS) * 8

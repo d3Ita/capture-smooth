@@ -42,6 +42,17 @@
     overflow-x: auto; font: 14px/1.5 ui-monospace, Consolas, monospace; white-space: pre; color: var(--muted); }
   footer { margin-top: 56px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
   footer a, main a:not(.btn) { color: var(--accent2); }
+  .player { position: relative; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: #000;
+    aspect-ratio: 16 / 9; }
+  .player video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; }
+  .player video.hidden { visibility: hidden; }
+  .switch { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 4px;
+    background: rgba(10, 12, 24, .72); padding: 4px; border-radius: 999px; backdrop-filter: blur(6px); }
+  .switch button { border: 0; border-radius: 999px; padding: 9px 16px; font: 600 15px system-ui, sans-serif;
+    color: #cfd3ea; background: transparent; cursor: pointer; white-space: nowrap; }
+  .switch button.on { background: var(--accent); color: #fff; }
+  @media (max-width: 560px) { .switch button { padding: 7px 10px; font-size: 13px; } }
+  #hz.ok { color: #6fdc8c; } #hz.low { color: #ffb86b; }
 </style>
 </head>
 <body>
@@ -56,17 +67,28 @@
     <a class="btn" href="https://github.com/d3Ita/capture-smooth">Source code</a>
   </div>
 
-  <h2>Side by side, real time</h2>
-  <p class="note">Left: what the console sends (30 fps). Right: with Capture Smooth at x2 (60 fps). This video plays on any screen; the 90 fps version is just below.</p>
-  <video src="media/compare_60fps.mp4" poster="media/compare_60fps_poster.jpg" autoplay muted loop playsinline controls></video>
+  <h2>30 fps or 90 fps: switch and compare</h2>
+  <p class="note">The same scene, full frame. Switch while it plays (or press <code>Tab</code>) and watch the camera turn. The 90 fps version needs a screen of 90 Hz or more: <span id="hz">checking your screen…</span></p>
+  <div class="player">
+    <video id="v30" src="media/full_30fps.mp4" poster="media/full_poster.jpg" muted loop playsinline preload="auto"></video>
+    <video id="v90" src="media/full_90fps.mp4" poster="media/full_poster.jpg" muted loop playsinline preload="auto"></video>
+    <div class="switch" role="tablist">
+      <button id="b30" role="tab">Original · 30 fps</button>
+      <button id="b90" role="tab" class="on">Capture Smooth · 90 fps</button>
+    </div>
+  </div>
 
-  <h2>90 fps (x3)</h2>
-  <p class="note">The setting the app uses for a 30 fps game: two AI frames between each real one. This video is 90 fps, so the difference shows fully on a screen of 90 Hz or more (on a 60 Hz screen it looks like the video above).</p>
-  <video src="media/compare_90fps.mp4" poster="media/compare_90fps_poster.jpg" autoplay muted loop playsinline controls></video>
+  <h2>Split screen, 90 fps</h2>
+  <p class="note">One picture: the left half is what the console sends, the right half is Capture Smooth. Look at the edges and the divider when the camera moves.</p>
+  <video class="auto" src="media/split_90fps.mp4" poster="media/split_90fps_poster.jpg" muted loop playsinline controls preload="none"></video>
+
+  <h2>Side by side, 60 fps</h2>
+  <p class="note">For 60 Hz screens: left 30 fps, right Capture Smooth at x2 (60 fps).</p>
+  <video class="auto" src="media/compare_60fps.mp4" poster="media/compare_60fps_poster.jpg" muted loop playsinline controls preload="none"></video>
 
   <h2>Slow motion (1/4 speed)</h2>
   <p class="note">Slowed down, the difference is visible on any screen: the original repeats each game frame, Capture Smooth fills the gap with AI frames.</p>
-  <video src="media/compare_slowmo.mp4" poster="media/compare_slowmo_poster.jpg" autoplay muted loop playsinline controls></video>
+  <video class="auto" src="media/compare_slowmo.mp4" poster="media/compare_slowmo_poster.jpg" muted loop playsinline controls preload="none"></video>
 
   <h2>What the AI adds</h2>
   <p class="note">Two consecutive real frames from the game, and the two frames Capture Smooth generates between them at x3.</p>
@@ -104,5 +126,61 @@
     Gameplay footage: Grand Theft Auto VI © Rockstar Games, shown only to demonstrate the software.
   </footer>
 </main>
+<script>
+// 30 / 90 switch: only the visible video decodes; switching jumps to the same moment in the other one.
+const v30 = document.getElementById("v30"), v90 = document.getElementById("v90");
+const b30 = document.getElementById("b30"), b90 = document.getElementById("b90");
+let cur = v90, inView = false;
+v30.classList.add("hidden");
+function show(next) {
+  if (next === cur) return;
+  const t = cur.currentTime;
+  cur.pause();
+  next.classList.remove("hidden");
+  cur.classList.add("hidden");
+  cur = next;
+  b30.classList.toggle("on", cur === v30);
+  b90.classList.toggle("on", cur === v90);
+  const go = () => {
+    next.currentTime = Math.min(t, (next.duration || t + 1) - 0.05);
+    if (inView && cur === next) next.play().catch(() => {});
+  };
+  next.readyState >= 1 ? go() : next.addEventListener("loadedmetadata", go, { once: true });
+}
+b30.onclick = () => show(v30);
+b90.onclick = () => show(v90);
+document.addEventListener("keydown", e => {
+  if (e.key === "Tab" && inView) { e.preventDefault(); show(cur === v30 ? v90 : v30); }
+});
+
+// Play a video only while it is on screen, so the browser never decodes two at once.
+const io = new IntersectionObserver(entries => {
+  for (const e of entries) {
+    if (e.target.classList.contains("player")) {
+      inView = e.isIntersecting;
+      inView ? cur.play().catch(() => {}) : cur.pause();
+    } else {
+      e.isIntersecting ? e.target.play().catch(() => {}) : e.target.pause();
+    }
+  }
+}, { threshold: 0.5 });
+io.observe(document.querySelector(".player"));
+document.querySelectorAll("video.auto").forEach(v => io.observe(v));
+
+// Measure the screen refresh rate, to tell whether 90 fps can be seen here.
+(function () {
+  const el = document.getElementById("hz");
+  let n = 0, t0 = 0;
+  function tick(t) {
+    if (!t0) t0 = t;
+    if (++n < 120) return requestAnimationFrame(tick);
+    const hz = Math.round(1000 * (n - 1) / (t - t0));
+    el.textContent = hz >= 85 ? `yours runs at about ${hz} Hz, good.`
+      : `yours runs at about ${hz} Hz, so both will look alike. Use the slow motion below, or open this page on a faster screen.`;
+    el.className = hz >= 85 ? "ok" : "low";
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
 </body>
 </html>
