@@ -29,7 +29,9 @@ DUP_LEVEL = 3
 DUP_SHARE = 4e-5
 
 # HUD protection and sharpening: see post.py (shared with the ONNX export, so both engines look the same).
-SHARP_MAX = 1.5  # same value as post.SHARP_MAX (post.py imports torch, which the DirectML build lacks)
+SHARP_MAX = 1.5  # same values as in post.py (post.py imports torch, which the DirectML build lacks)
+HUD_LEVEL = 3
+HUD_FRAMES = 4
 
 
 def small_gray(frame_bgr):
@@ -52,8 +54,9 @@ def app_dir():
     return Path(__file__).resolve().parent
 
 
-def padded(h, w, scale):
-    pad = int(32 / scale)
+def padded(h, w, scale, align=32):
+    """Size the network needs: the flow resolution (h*scale) must divide by the model's align (32 for RIFE 4.6)."""
+    pad = int(align / scale)
     return (h + pad - 1) // pad * pad, (w + pad - 1) // pad * pad
 
 
@@ -97,9 +100,9 @@ class CudaEngine:
         self.torch, self.F = torch, F
         self.W, self.H = work_size
         self.scale = scale
-        self.ph, self.pw = padded(self.H, self.W, scale)
         self.resize = src_size != work_size
         self.net = load_model(app_dir() / "models" / "flownet_v4.6.pkl", half=self.dtype == torch.half)
+        self.ph, self.pw = padded(self.H, self.W, scale, self.net.align)
         self.use_graphs = use_graphs
         self.graphs = {}  # t -> (CUDA graph, its RGBA output)
         # Fixed input slots for the CUDA graphs (a graph always reads the same memory).
@@ -108,7 +111,9 @@ class CudaEngine:
         # Options live in GPU scalars, so the recorded graphs follow changes made while playing.
         self.sharp = torch.zeros((), device="cuda", dtype=self.dtype)
         self.hud = True
-        self.hudmask = torch.zeros((1, 1, self.H, self.W), device="cuda", dtype=self.dtype)  # per pair
+        sh8, sw8 = self.H // DUP_REDUCE, self.W // DUP_REDUCE
+        self.hudcount = torch.zeros((1, 1, sh8, sw8), device="cuda", dtype=torch.float32)  # see post.py
+        self.hudmask = torch.zeros((1, 1, sh8, sw8), device="cuda", dtype=self.dtype)       # read by the graphs
         self.opts = (None, None)
         self.tsteps = {}
         self.cache = FrameCache()
@@ -160,11 +165,11 @@ class CudaEngine:
 
     def finish(self, x, protect):
         """Crop, HUD protection (in-betweens only), sharpening: the frame as it will be shown, 0-1 RGB."""
-        from post import sharpen
+        from post import apply_hud, sharpen
         x = x[:, :, :self.H, :self.W]
         if protect:  # the mask was computed once for this pair, in set_pair
             b = self.slot1[:, :, :self.H, :self.W]
-            x = x + (b - x) * self.hudmask
+            x = apply_hud(x, b, self.hudmask)
         return sharpen(x, self.sharp)
 
     def rgba_into(self, x, out, protect=False):
@@ -212,13 +217,19 @@ class CudaEngine:
         torch.cuda.synchronize()
 
     def set_pair(self, prev, cur):
-        from post import hud_mask
+        from post import hud_count, hud_mask_small
         self.slot0.copy_(prev)
         self.slot1.copy_(cur)
         if self.hud:
-            self.hudmask.copy_(hud_mask(prev[:, :, :self.H, :self.W], cur[:, :, :self.H, :self.W]))
+            self.hudcount.copy_(hud_count(self.hudcount, self.small(prev), self.small(cur)))
+            self.hudmask.copy_(hud_mask_small(self.hudcount))
         else:
+            self.hudcount.zero_()
             self.hudmask.zero_()
+
+    def reset_history(self):
+        """After a scene cut: nothing on screen has been still for long."""
+        self.hudcount.zero_()
 
     def interp(self, t):
         if t in self.graphs:
@@ -270,6 +281,7 @@ class DmlEngine:
         self.pair = None
         self.tvals = {}
         self.cache = FrameCache()
+        self.hudcount = None
         self.set_options(0.0, True)
 
     def thread_init(self):
@@ -277,7 +289,7 @@ class DmlEngine:
 
     def set_options(self, sharpness, hud):
         self.sharp = np.array([float(sharpness) * SHARP_MAX], np.float32)
-        self.hud = np.array([1.0 if hud else 0.0], np.float32)
+        self.hud = bool(hud)
 
     def upload(self, frame):
         if self.resize:
@@ -300,13 +312,27 @@ class DmlEngine:
 
     def set_pair(self, prev, cur):
         self.pair = (prev, cur)
+        sa, sb = self.cache.get(prev, "small", small_gray), self.cache.get(cur, "small", small_gray)
+        if self.hudcount is None or self.hudcount.shape != sa.shape:
+            self.hudcount = np.zeros(sa.shape, np.float32)
+        if self.hud:  # same rule as post.hud_count, on the CPU (the reduced copies are tiny)
+            same = (cv2.absdiff(sa, sb) < HUD_LEVEL).astype(np.uint8)
+            same = cv2.erode(same, np.ones((3, 3), np.uint8), borderType=cv2.BORDER_REPLICATE)
+            self.hudcount = (self.hudcount + 1) * same
+        else:
+            self.hudcount[:] = 0
+        self.hudmask = (self.hudcount >= HUD_FRAMES).astype(np.float16)[None, None]
+
+    def reset_history(self):
+        if self.hudcount is not None:
+            self.hudcount[:] = 0
 
     def interp(self, t):
         if t not in self.tvals:
             self.tvals[t] = np.array([t], np.float16)
         f0, f1 = self.pair
         return self.sess.run(None, {"frame0": f0, "frame1": f1, "t": self.tvals[t],
-                                    "sharp": self.sharp, "hud": self.hud})[0]
+                                    "sharp": self.sharp, "hudmask": self.hudmask})[0]
 
     def real(self, cur):
         return self.post.run(None, {"frame": cur, "sharp": self.sharp})[0]

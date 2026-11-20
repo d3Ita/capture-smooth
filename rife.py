@@ -105,11 +105,86 @@ class IFNet(nn.Module):
         return w0 * mask + w1 * (1 - mask)
 
 
+class Head(nn.Module):
+    """Feature encoder of RIFE 4.22+: 4 feature channels per frame, at full resolution."""
+
+    def __init__(self):
+        super().__init__()
+        self.cnn0 = nn.Conv2d(3, 16, 3, 2, 1)
+        self.cnn1 = nn.Conv2d(16, 16, 3, 1, 1)
+        self.cnn2 = nn.Conv2d(16, 16, 3, 1, 1)
+        self.cnn3 = nn.ConvTranspose2d(16, 4, 4, 2, 1)
+        self.relu = nn.LeakyReLU(0.2, True)
+
+    def forward(self, x):
+        x = self.relu(self.cnn0(x))
+        x = self.relu(self.cnn1(x))
+        x = self.relu(self.cnn2(x))
+        return self.cnn3(x)
+
+
+class IFBlock2(nn.Module):
+    """RIFE 4.22+ block: also returns 8 feature channels passed on to the next block."""
+
+    def __init__(self, cin, c):
+        super().__init__()
+        self.conv0 = nn.Sequential(conv(cin, c // 2, 3, 2, 1), conv(c // 2, c, 3, 2, 1))
+        self.convblock = nn.Sequential(*[ResConv(c) for _ in range(8)])
+        self.lastconv = nn.Sequential(nn.ConvTranspose2d(c, 4 * 13, 4, 2, 1), nn.PixelShuffle(2))
+
+    def forward(self, x, flow, scale):
+        x = F.interpolate(x, scale_factor=1.0 / scale, mode="bilinear", align_corners=False)
+        if flow is not None:
+            flow = F.interpolate(flow, scale_factor=1.0 / scale, mode="bilinear", align_corners=False) / scale
+            x = torch.cat((x, flow), 1)
+        tmp = self.lastconv(self.convblock(self.conv0(x)))
+        tmp = F.interpolate(tmp, scale_factor=scale, mode="bilinear", align_corners=False)
+        return tmp[:, :4] * scale, tmp[:, 4:5], tmp[:, 5:]
+
+
+class IFNet2(IFNet):
+    """RIFE 4.22 to 4.26 (Practical-RIFE, MIT): a feature encoder, and 4 or 5 blocks. Same interface and the
+    same speed-up as IFNet: flow estimated on reduced frames, only the final warp at full resolution."""
+
+    def __init__(self, widths):
+        nn.Module.__init__(self)
+        self.encode = Head()
+        self.blocks = nn.ModuleList([IFBlock2(15 if i == 0 else 28, c) for i, c in enumerate(widths)])
+        self.scales = [2 ** (len(widths) - 1 - i) for i in range(len(widths))]  # 16,8,4,2,1 or 8,4,2,1
+        self.align = 4 * self.scales[0]  # flow resolution must divide by this
+        self._grid = {}
+
+    def flow(self, img0, img1, timestep):
+        f0, f1 = self.encode(img0), self.encode(img1)
+        flow = mask = feat = None
+        w0, w1 = img0, img1
+        last = len(self.blocks) - 1
+        for i, (blk, s) in enumerate(zip(self.blocks, self.scales)):
+            if flow is None:
+                flow, mask, feat = blk(torch.cat((img0, img1, f0, f1, timestep), 1), None, s)
+            else:
+                wf0, wf1 = self.warp(f0, flow[:, :2]), self.warp(f1, flow[:, 2:4])
+                fd, mask, feat = blk(torch.cat((w0, w1, wf0, wf1, timestep, mask, feat), 1), flow, s)
+                flow = flow + fd
+            if i != last:
+                w0 = self.warp(img0, flow[:, :2])
+                w1 = self.warp(img1, flow[:, 2:4])
+        return flow, mask
+
+
 def load_model(path=None, device="cuda", half=True):
     path = path or Path(__file__).with_name("models") / "flownet_v4.6.pkl"
     sd = torch.load(path, map_location="cpu", weights_only=True)
     sd = {k.removeprefix("module."): v for k, v in sd.items()}
-    net = IFNet()
+    if any(k.startswith("encode.") for k in sd):  # RIFE 4.22+; the training-only parts are not needed
+        sd = {k: v for k, v in sd.items() if not k.startswith(("teacher.", "caltime."))}
+        n = len({k.split(".")[0] for k in sd if k.startswith("block")})
+        widths = [sd[f"block{i}.conv0.1.0.weight"].shape[0] for i in range(n)]
+        sd = {(f"blocks.{k[5]}{k[6:]}" if k.startswith("block") else k): v for k, v in sd.items()}
+        net = IFNet2(widths)
+    else:
+        net = IFNet()
+        net.align = 32
     net.load_state_dict(sd, strict=True)
     net = net.eval().to(device)
     if half:

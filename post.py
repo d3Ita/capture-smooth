@@ -6,12 +6,15 @@ in 0-1, shape (1, 3, H, W), already cropped.
 import torch
 import torch.nn.functional as F
 
-# HUD protection: where a pixel is the same in both real frames (minimap, health bar, subtitles over a
-# still background...), the right in-between value is that pixel itself. The network can still smear
-# nearby motion over it, so those zones are copied from the real frame. "Same" = every channel within
-# HUD_LEVEL/255 (capture noise stays under ~8/255), in a whole HUD_SIZE x HUD_SIZE neighbourhood.
-HUD_LEVEL = 10
-HUD_SIZE = 5
+# HUD protection: a minimap, health bar or fixed text stays put for seconds, while scenery moves as soon as
+# the camera does. A block counts as HUD only once it has stayed the same for HUD_FRAMES real frames in a
+# row; then the in-between copies it from the real frame (the network can smear nearby motion over it).
+# A first version compared only the two current frames: during fast camera turns it took a quarter of the
+# picture (plain sky, walls) for HUD and pasted real-frame patches into the in-between, which doubled poles
+# and wires. Measured on fast GTA 6 turns.
+# The test uses the reduced grayscale copies made for the duplicate test (1/8 size, 0-255 levels).
+HUD_LEVEL = 3      # a block "stays the same" if its average brightness moves by less than this
+HUD_FRAMES = 4     # real frames in a row (~130 ms at 30 fps)
 
 # Sharpening (contrast-adaptive, like AMD CAS / NVIDIA NIS), on brightness only so colours stay as they
 # are: l + a * (l - blur3x3), clamped to the 3x3 neighbourhood's min and max so edges get crisper without
@@ -19,17 +22,22 @@ HUD_SIZE = 5
 SHARP_MAX = 1.5
 
 
-def hud_mask(a, b):
-    """1 where the two real frames match over a whole neighbourhood, with a soft edge; shape (1, 1, H, W).
-    Computed once per pair of real frames."""
-    same = ((b - a).abs().amax(1, keepdim=True) < HUD_LEVEL / 255).to(a.dtype)
-    m = -F.max_pool2d(-same, HUD_SIZE, 1, HUD_SIZE // 2)
-    return F.avg_pool2d(m, 3, 1, 1)
+def hud_count(count, small_a, small_b):
+    """count: blocks' number of real frames in a row without change (1, 1, h/8, w/8), updated for a new pair.
+    A block also needs its 3x3 neighbours unchanged, so moving edges never count."""
+    same = ((small_b - small_a).abs() < HUD_LEVEL).to(count.dtype)
+    same = -F.max_pool2d(-same, 3, 1, 1)
+    return (count + 1) * same
 
 
-def protect_hud(x, a, b, on):
-    """x: in-between frame, a/b: the two real frames, on: 0 or 1 (tensor)."""
-    return x + (b - x) * (hud_mask(a, b) * on)
+def hud_mask_small(count):
+    return (count >= HUD_FRAMES).to(count.dtype)
+
+
+def apply_hud(x, b, mask_small):
+    """Copies the protected blocks from the real frame b, with soft edges (mask upscaled bilinearly)."""
+    m = F.interpolate(mask_small.to(x.dtype), size=x.shape[-2:], mode="bilinear", align_corners=False)
+    return x + (b - x) * m
 
 
 def sharpen(x, amount):

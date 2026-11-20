@@ -15,7 +15,7 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from engines import onnx_name, padded, post_name  # noqa: E402
-from post import protect_hud, sharpen  # noqa: E402
+from post import apply_hud, sharpen  # noqa: E402
 from rife import load_model  # noqa: E402
 
 SIZES = [(1920, 1080, 1.0), (1920, 1080, 0.5), (2560, 1440, 0.5)]
@@ -52,13 +52,13 @@ class Interp(nn.Module):
         x = f.permute(2, 0, 1).unsqueeze(0).index_select(1, self.bgr).half() / 255
         return F.pad(x, (0, self.pw - self.w, 0, self.ph - self.h), mode="replicate")
 
-    def forward(self, frame0, frame1, t, sharp, hud):
+    def forward(self, frame0, frame1, t, sharp, hudmask):
         x0, x1 = self.prep(frame0), self.prep(frame1)
         sh, sw = int(self.ph * self.scale), int(self.pw * self.scale)
         ts = t.view(1, 1, 1, 1).expand(1, 1, sh, sw)
         mid = self.net(x0, x1, ts, self.scale)[:, :, :self.h, :self.w]
         a, b = x0[:, :, :self.h, :self.w], x1[:, :, :self.h, :self.w]
-        y = sharpen(protect_hud(mid, a, b, hud.view(1, 1, 1, 1).half()), sharp.view(1, 1, 1, 1).half())
+        y = sharpen(apply_hud(mid, b, hudmask), sharp.view(1, 1, 1, 1).half())
         return to_rgba(y.float())
 
 
@@ -90,11 +90,12 @@ def main():
         f1 = torch.randint(0, 255, (h, w, 3), dtype=torch.uint8, device="cuda")
         t = torch.tensor([0.5], dtype=torch.half, device="cuda")
         sharp = torch.tensor([0.45], dtype=torch.float32, device="cuda")
-        hud = torch.tensor([1.0], dtype=torch.float32, device="cuda")
+        hudmask = torch.zeros((1, 1, h // 8, w // 8), dtype=torch.half, device="cuda")
         path = out_dir / onnx_name(w, h, scale)
         with torch.no_grad():
-            m(f0, f1, t, sharp, hud)  # fills the warp grid cache for these sizes
-        torch.onnx.export(m, (f0, f1, t, sharp, hud), str(path), input_names=["frame0", "frame1", "t", "sharp", "hud"],
+            m(f0, f1, t, sharp, hudmask)  # fills the warp grid cache for these sizes
+        torch.onnx.export(m, (f0, f1, t, sharp, hudmask), str(path),
+                          input_names=["frame0", "frame1", "t", "sharp", "hudmask"],
                           output_names=["rgba"], opset_version=17, dynamo=False,
                           do_constant_folding=False)  # folding would store the full-size warp grids (100+ Mo)
         print(f"{path.name}: {path.stat().st_size / 1e6:.1f} Mo")

@@ -230,6 +230,7 @@ class Worker(threading.Thread):
                         and change > CUT_RATIO * (float(np.median(motion)) + 1.0):
                     cut = True
                     motion.clear()
+                    eng.reset_history()
                     with self.stats.lock:
                         self.stats.cuts += 1
                 else:
