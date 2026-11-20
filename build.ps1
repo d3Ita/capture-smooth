@@ -1,5 +1,6 @@
 # Builds the two Windows releases into dist\:
-#   CaptureSmooth-NVIDIA    PyTorch + CUDA (fastest, NVIDIA only)  -> built with the Python that has torch
+#   CaptureSmooth-NVIDIA    PyTorch CUDA 12.8 (RTX 20 to RTX 50, GTX 16) + the DirectML engine as fallback
+#                           -> built in .venv-cuda128 (pip install torch --index-url https://download.pytorch.org/whl/cu128)
 #   CaptureSmooth-DirectML  ONNX Runtime + DirectML (any DX12 GPU) -> built in .venv-dml (no torch inside)
 #
 #   powershell -ExecutionPolicy Bypass -File build.ps1 [-Only NVIDIA|DirectML] [-Zip]
@@ -7,8 +8,12 @@ param([string]$Only = "", [switch]$Zip)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$venv = Join-Path $PSScriptRoot "..\.venv-dml"
-if (-not (Test-Path "$venv\Scripts\python.exe")) { $venv = Join-Path $PSScriptRoot ".venv-dml" }
+function Find-Venv($n) {
+    foreach ($p in (Join-Path $PSScriptRoot "..\$n"), (Join-Path $PSScriptRoot $n)) { if (Test-Path "$p\Scripts\python.exe") { return $p } }
+    throw "environnement $n introuvable"
+}
+$onnx = @("--add-data", "models\rife46_1920x1080_s100.onnx;models", "--add-data", "models\rife46_1920x1080_s50.onnx;models",
+          "--add-data", "models\rife46_2560x1440_s50.onnx;models")
 $common = @("--noconfirm", "--clean", "--console", "--distpath", "dist", "--workpath", "build",
             "--collect-binaries", "glfw", "--exclude-module", "matplotlib", "--add-data", "assets\icon.ico;assets",
             "--icon", "assets\icon.ico")
@@ -31,16 +36,15 @@ function Finish($name) {
 }
 
 if ($Only -ne "NVIDIA") {
-    & "$venv\Scripts\python.exe" -m PyInstaller @common --name CaptureSmooth-DirectML `
-        --add-data "models\rife46_1920x1080_s100.onnx;models" --add-data "models\rife46_1920x1080_s50.onnx;models" `
-        --add-data "models\rife46_2560x1440_s50.onnx;models" --exclude-module torch smooth.py
+    & "$(Find-Venv .venv-dml)\Scripts\python.exe" -m PyInstaller @common @onnx --name CaptureSmooth-DirectML `
+        --exclude-module torch smooth.py
     if ($LASTEXITCODE) { throw "build DirectML" }
     Finish "CaptureSmooth-DirectML"
 }
 
 if ($Only -ne "DirectML") {
-    python -m PyInstaller @common --name CaptureSmooth-NVIDIA --add-data "models\flownet_v4.6.pkl;models" `
-        --exclude-module onnxruntime --exclude-module onnx --exclude-module torchvision --exclude-module torchaudio `
+    & "$(Find-Venv .venv-cuda128)\Scripts\python.exe" -m PyInstaller @common @onnx --name CaptureSmooth-NVIDIA `
+        --add-data "models\flownet_v4.6.pkl;models" --exclude-module onnx --exclude-module torchvision --exclude-module torchaudio `
         --exclude-module numba --exclude-module llvmlite --exclude-module bitsandbytes --exclude-module PySide6 `
         --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module scipy --exclude-module pandas `
         --exclude-module transformers --exclude-module tensorboard --exclude-module IPython --exclude-module triton `

@@ -14,14 +14,12 @@ import cv2
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from engines import DUP_LEVEL, DUP_SHARE  # noqa: E402
+from engines import dup_cpu, small_gray  # noqa: E402
 from smooth import pick_device  # noqa: E402
 
 
 def is_dup(a, b):
-    d = cv2.absdiff(a, b).reshape(a.shape[0], -1)
-    _, m = cv2.threshold(d, DUP_LEVEL, 255, cv2.THRESH_BINARY)
-    return cv2.countNonZero(m) / d.size < DUP_SHARE
+    return dup_cpu(small_gray(a), small_gray(b))
 
 
 def main():

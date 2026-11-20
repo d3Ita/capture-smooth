@@ -44,8 +44,10 @@ The added latency is mostly unavoidable. An in-between frame needs the *next* re
 
 Get the latest [release](../../releases):
 
-- **CaptureSmooth-NVIDIA**: fastest. Needs a GeForce GTX 10xx or newer with a recent driver. The download is large (CUDA is included) and comes in **two zip files: extract both into the same folder**.
-- **CaptureSmooth-DirectML**: about 100 MB, for any DirectX 12 graphics card.
+- **CaptureSmooth-NVIDIA**: fastest, for GeForce **RTX 20, 30, 40 and 50** series and **GTX 16** series, with a recent driver. It also contains the DirectML engine and switches to it by itself on any other card. The download is large (CUDA is included) and comes in **several zip parts: download them all and extract them into the same folder**.
+- **CaptureSmooth-DirectML**: about 110 MB, for any DirectX 12 graphics card (AMD Radeon, Intel Arc, older NVIDIA such as the GTX 10 series).
+
+> **"Windows protected your PC"?** The exe is not code-signed (a certificate costs money), so Windows SmartScreen warns about it the first time. Click **More info → Run anyway**. The full source code is in this repository.
 
 Then **double-click `CaptureSmooth-NVIDIA.exe`** (or `CaptureSmooth-DirectML.exe`). A settings window opens. Choose:
 
@@ -95,7 +97,7 @@ Windows 10/11 and Python 3.11+.
 
 ```
 pip install numpy opencv-python-headless glfw PyOpenGL sounddevice comtypes
-pip install torch --index-url https://download.pytorch.org/whl/cu118     # CUDA engine
+pip install torch --index-url https://download.pytorch.org/whl/cu128     # CUDA engine (RTX 20 to RTX 50)
 pip install onnxruntime-directml                                         # or the DirectML engine
 python smooth.py --res 1440p --x 3
 ```
@@ -111,8 +113,10 @@ Génération d'images gratuite et open source pour un **boîtier de capture** : 
 
 **Installation :** télécharge la [release](../../releases).
 
-- **CaptureSmooth-NVIDIA** : la plus rapide, pour les cartes NVIDIA. Elle vient en **deux fichiers zip : décompresse-les tous les deux dans le même dossier**.
-- **CaptureSmooth-DirectML** : pour toutes les cartes graphiques.
+- **CaptureSmooth-NVIDIA** : la plus rapide, pour les GeForce **RTX 20, 30, 40 et 50** et **GTX 16**. Sur une autre carte, elle passe toute seule au moteur DirectML. Elle vient en **plusieurs fichiers zip : télécharge-les tous et décompresse-les dans le même dossier**.
+- **CaptureSmooth-DirectML** : pour toutes les cartes graphiques (AMD Radeon, Intel Arc, anciennes NVIDIA comme les GTX 10).
+
+> **« Windows a protégé votre ordinateur » ?** L'exe n'est pas signé (un certificat est payant), donc Windows SmartScreen prévient au premier lancement. Clique sur **Informations complémentaires → Exécuter quand même**. Tout le code source est dans ce dépôt.
 
 Ensuite, **double-clique sur l'exe**. Une fenêtre de réglages s'ouvre : choisis la sortie vidéo de la console, les fps du jeu, la fluidité ou la latence, puis clique sur **Lancer**. Tes choix sont mémorisés.
 

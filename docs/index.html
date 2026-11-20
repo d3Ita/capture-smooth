@@ -457,7 +457,7 @@
         <div class="feat"><svg><use href="#i-spark"/></svg><h3 data-i18n="f1.h">AI frame generation</h3><p data-i18n="f1.p">RIFE 4.6, a state-of-the-art interpolation network. It needs nothing from the game, so it works on any video feed.</p></div>
         <div class="feat"><svg><use href="#i-copy"/></svg><h3 data-i18n="f2.h">Duplicate detection</h3><p data-i18n="f2.p">A 30 fps game in a 60 Hz signal sends every frame twice. Copies are skipped, so AI frames only go between real ones.</p></div>
         <div class="feat"><svg><use href="#i-zap"/></svg><h3 data-i18n="f3.h">Low latency</h3><p data-i18n="f3.p">Motion estimated at half resolution, the AI step recorded as one CUDA graph, frames paced evenly, late ones dropped.</p></div>
-        <div class="feat"><svg><use href="#i-cpu"/></svg><h3 data-i18n="f4.h">NVIDIA or any GPU</h3><p data-i18n="f4.p">A CUDA engine for GeForce cards, and a DirectML engine for any DirectX 12 card: AMD Radeon, Intel Arc, older NVIDIA.</p></div>
+        <div class="feat"><svg><use href="#i-cpu"/></svg><h3 data-i18n="f4.h">NVIDIA or any GPU</h3><p data-i18n="f4.p">A CUDA engine for GeForce RTX 20 to RTX 50, and a DirectML engine for any DirectX 12 card. The app picks the right one by itself.</p></div>
         <div class="feat"><svg><use href="#i-sound"/></svg><h3 data-i18n="f5.h">Game sound included</h3><p data-i18n="f5.p">The capture card's audio plays on your speakers, with an optional delay to stay in sync with the picture.</p></div>
         <div class="feat"><svg><use href="#i-sliders"/></svg><h3 data-i18n="f6.h">One-click setup</h3><p data-i18n="f6.p">Double-click, pick your console's output and the game's frame rate, press Start. Borderless full screen, fps counter on F1.</p></div>
       </div>
@@ -487,7 +487,7 @@
           <div class="flag" data-i18n="dl.rec">Recommended · fastest</div>
           <h3>NVIDIA GeForce</h3>
           <ul>
-            <li data-i18n="dl.n1">GTX 10 series or newer, recent driver</li>
+            <li data-i18n="dl.n1">RTX 20, 30, 40, 50 and GTX 16 series, recent driver</li>
             <li data-i18n="dl.n2">CUDA engine: 7 ms per AI frame, ~32 ms at 90 fps</li>
             <li data-i18n="dl.n3">2.8 GB in two parts: extract both into the same folder</li>
           </ul>
@@ -500,7 +500,7 @@
           <div class="flag alt" data-i18n="dl.any">Any DirectX 12 GPU</div>
           <h3>DirectML</h3>
           <ul>
-            <li data-i18n="dl.d1">AMD Radeon, Intel Arc, NVIDIA</li>
+            <li data-i18n="dl.d1">AMD Radeon, Intel Arc, older NVIDIA (GTX 10…)</li>
             <li data-i18n="dl.d2">Light: a single 114 MB download</li>
             <li data-i18n="dl.d3">About twice slower than CUDA on NVIDIA cards</li>
           </ul>
@@ -534,6 +534,7 @@
         <details><summary data-i18n="q3">Which capture cards work?</summary><p data-i18n="a3">Any card Windows sees as a camera (USB video class or DirectShow): Elgato HD60 X, 4K X, Cam Link, AVerMedia Live Gamer, and most generic HDMI-to-USB cards. It was developed on an Elgato HD60 X.</p></details>
         <details><summary data-i18n="q4">My console refuses 1440p. What can I do?</summary><p data-i18n="a4">The console only offers resolutions supported by the screen plugged into the card's HDMI passthrough. In your capture card's software, set the EDID to "internal", unplug and plug the console again, and 1440p (or 4K) appears. A 4K output works too: the card downscales it.</p></details>
         <details><summary data-i18n="q5">Why do I get a black screen or "invalid resolution"?</summary><p data-i18n="a5">Capture cards cannot upscale. If you choose 1440p while the console sends 1080p, the card shows an error picture. Pick the resolution the console really outputs.</p></details>
+        <details><summary data-i18n="q7">Windows says "Windows protected your PC". Is it safe?</summary><p data-i18n="a7">The exe is not code-signed (a signing certificate costs money), so Windows SmartScreen warns the first time. Click "More info", then "Run anyway". The full source code is public on GitHub, and you can build the exe yourself with build.ps1.</p></details>
         <details><summary data-i18n="q6">Is it really free?</summary><p data-i18n="a6">Yes. The code is MIT licensed, the AI model (RIFE) is MIT licensed, and there is nothing to buy or sign up for.</p></details>
       </div>
     </div>
@@ -595,7 +596,7 @@ const FR = {
   "f1.h": "Génération d'images par IA", "f1.p": "RIFE 4.6, un réseau d'interpolation de pointe. Il n'a besoin de rien venant du jeu : il marche sur n'importe quel flux vidéo.",
   "f2.h": "Détection des doublons", "f2.p": "Un jeu à 30 fps dans un signal 60 Hz envoie chaque image deux fois. Les copies sont ignorées : les images IA vont seulement entre les vraies.",
   "f3.h": "Faible latence", "f3.p": "Mouvement estimé en demi-résolution, l'étape IA enregistrée en un seul CUDA graph, images régulières, les retardataires abandonnées.",
-  "f4.h": "NVIDIA ou toute carte", "f4.p": "Un moteur CUDA pour les GeForce, et un moteur DirectML pour toute carte DirectX 12 : AMD Radeon, Intel Arc, anciennes NVIDIA.",
+  "f4.h": "NVIDIA ou toute carte", "f4.p": "Un moteur CUDA pour les GeForce RTX 20 à RTX 50, et un moteur DirectML pour toute carte DirectX 12. L'appli choisit toute seule le bon.",
   "f5.h": "Le son du jeu inclus", "f5.p": "Le son du boîtier passe sur tes haut-parleurs, avec un décalage réglable pour rester synchro avec l'image.",
   "f6.h": "Réglage en un clic", "f6.p": "Double-clic, choisis la sortie de ta console et les fps du jeu, clique sur Lancer. Plein écran sans bordure, compteur fps sur F1.",
   "how.k": "Fonctionnement", "how.h": "De ta console à ton écran",
@@ -605,9 +606,9 @@ const FR = {
   "how.4h": "Ton écran", "how.4p": "60, 90 ou 120 fps, réguliers, avec le son.",
   "dl.k": "Téléchargement", "dl.h": "Télécharge Capture Smooth",
   "dl.sub": "Windows 10 ou 11, un boîtier de capture et une carte graphique. Décompresse, double-clique sur l'exe, joue.",
-  "dl.rec": "Recommandé · le plus rapide", "dl.n1": "GTX 10 ou plus récente, pilote à jour", "dl.n2": "Moteur CUDA : 7 ms par image IA, ~32 ms à 90 fps",
+  "dl.rec": "Recommandé · le plus rapide", "dl.n1": "RTX 20, 30, 40, 50 et GTX 16, pilote à jour", "dl.n2": "Moteur CUDA : 7 ms par image IA, ~32 ms à 90 fps",
   "dl.n3": "2,8 Go en deux parties : décompresse-les dans le même dossier", "dl.p1": "Partie 1", "dl.p2": "Partie 2",
-  "dl.any": "Toute carte DirectX 12", "dl.d1": "AMD Radeon, Intel Arc, NVIDIA", "dl.d2": "Léger : un seul fichier de 114 Mo",
+  "dl.any": "Toute carte DirectX 12", "dl.d1": "AMD Radeon, Intel Arc, anciennes NVIDIA (GTX 10…)", "dl.d2": "Léger : un seul fichier de 114 Mo",
   "dl.d3": "Environ deux fois plus lent que CUDA sur les cartes NVIDIA", "dl.dd": "Télécharger",
   "s1.h": "Ferme OBS", "s1.p": "OBS et le logiciel du boîtier bloquent l'appareil. Ferme-les avant de lancer.",
   "s2.h": "Choisis tes réglages", "s2.p": "Double-clique sur l'exe. Choisis la résolution que ta console envoie vraiment et les fps de ton jeu.",
@@ -619,6 +620,7 @@ const FR = {
   "q3": "Quels boîtiers de capture marchent ?", "a3": "Tout boîtier que Windows voit comme une caméra (UVC ou DirectShow) : Elgato HD60 X, 4K X, Cam Link, AVerMedia Live Gamer, et la plupart des boîtiers HDMI-USB génériques. L'appli a été développée sur un Elgato HD60 X.",
   "q4": "Ma console refuse le 1440p. Que faire ?", "a4": "La console ne propose que les résolutions de l'écran branché sur la sortie HDMI du boîtier. Dans le logiciel du boîtier, mets l'EDID sur « interne », débranche et rebranche la console, et le 1440p (ou la 4K) apparaît. La sortie 4K marche aussi : le boîtier la réduit.",
   "q5": "Pourquoi un écran noir ou « invalid resolution » ?", "a5": "Les boîtiers de capture ne peuvent pas agrandir l'image. Si tu choisis 1440p alors que la console envoie du 1080p, le boîtier affiche une image d'erreur. Choisis la résolution que la console envoie vraiment.",
+  "q7": "Windows affiche « Windows a protégé votre ordinateur ». C'est sûr ?", "a7": "L'exe n'est pas signé (un certificat de signature est payant), donc Windows SmartScreen prévient au premier lancement. Clique sur « Informations complémentaires », puis « Exécuter quand même ». Tout le code source est public sur GitHub, et tu peux construire l'exe toi-même avec build.ps1.",
   "q6": "C'est vraiment gratuit ?", "a6": "Oui. Le code est sous licence MIT, le modèle IA (RIFE) aussi, et il n'y a rien à acheter ni de compte à créer.",
   "final.k": "Téléchargement gratuit", "final.h": "Donne à tes jeux console les fps qu'ils méritent", "final.src": "Code source",
   "foot.rel": "Versions", "foot.credits": "Crédits",

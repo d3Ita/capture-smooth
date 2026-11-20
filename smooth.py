@@ -26,6 +26,7 @@ from OpenGL.GL import (
 )
 
 APP = "Capture Smooth"
+VERSION = "1.1.0"
 
 RES = {"1080p": (1920, 1080), "1440p": (2560, 1440), "4k": (3840, 2160)}
 now = time.perf_counter
@@ -440,15 +441,36 @@ def pick_device(wanted):
 
 
 def make_engine(kind, src_size, work, scale):
+    """CUDA if this card supports it, otherwise DirectML. Each engine is warmed up here, so a card that
+    loads but cannot run the network still falls back instead of crashing later."""
+    reasons = []
+    if kind == "auto":
+        try:
+            import torch  # noqa: F401  (absent from the DirectML build: go straight to DirectML, silently)
+        except ImportError:
+            kind = "directml"
     if kind in ("auto", "cuda"):
         try:
             from engines import CudaEngine
-            return CudaEngine(src_size, work, scale)
+            eng = CudaEngine(src_size, work, scale)
+            eng.warmup()
+            if getattr(eng, "dtype", None) is not None and "float32" in str(eng.dtype):
+                print(f"({eng.gpu} : calcul en pleine précision, plus adapté à cette carte)")
+            return eng
         except Exception as e:
+            reasons.append(f"CUDA : {e}")
             if kind == "cuda":
-                raise RuntimeError(f"moteur CUDA indisponible : {e}")
-    from engines import DmlEngine
-    return DmlEngine(src_size, work, scale)
+                raise RuntimeError(f"moteur CUDA indisponible ({e})")
+            print(f"Moteur CUDA indisponible ({e}) : passage au moteur DirectML.")
+    try:
+        from engines import DmlEngine
+        eng = DmlEngine(src_size, work, scale)
+        eng.warmup()
+        return eng
+    except Exception as e:
+        reasons.append(f"DirectML : {e}")
+    raise RuntimeError("aucun moteur IA ne marche sur cette carte graphique.\n  " + "\n  ".join(reasons) +
+                       "\n  Mets à jour le pilote de ta carte graphique (Windows 10/11 et DirectX 12 requis).")
 
 
 def main():
@@ -511,11 +533,10 @@ def main():
     work = (sw, sh) if sh <= 1440 else (round(sw * 1440 / sh), 1440)
     scale = 0.5 if (args.quality == "rapide" and work[1] >= 1440) else 1.0
 
-    print("Préparation de l'IA…")
+    print(f"{APP} {VERSION} — préparation de l'IA…")
     engine = make_engine(args.moteur, src.size, work, scale)
     state, stats = State(args.x), Stats()
     display = Display(work, "fenetre" if args.windowed else args.mode, args.vsync, state, stats)
-    engine.warmup()
     worker = Worker(src, display, state, stats, engine)
     print(f"Prêt. Moteur {engine.name}, image {work[0]}x{work[1]}, IA échelle {scale}, x{args.x}, "
           f"écran {display.refresh} Hz.")
