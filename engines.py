@@ -5,6 +5,7 @@
 
 Common interface:
     upload(frame)        -> handle for one captured frame
+    change(prev, cur)    -> fraction of pixels that changed (cadence.py decides copy or new frame from it)
     is_dup(prev, cur)    -> True if cur is a copy of prev (30 fps game in a 60 Hz signal, still image)
     tiny(handle)         -> 32x18 grayscale thumbnail (float32 numpy), for scene-cut detection
     set_options(sharpness, hud)  -> sharpening amount (0-1) and HUD protection on/off
@@ -43,10 +44,15 @@ def small_gray(frame_bgr):
     return cv2.resize(g, (w // DUP_REDUCE, h // DUP_REDUCE), interpolation=cv2.INTER_AREA)
 
 
-def dup_cpu(small_a, small_b):
+def change_cpu(small_a, small_b):
+    """Fraction of the reduced pixels that changed by DUP_LEVEL or more (cadence.py decides from it)."""
     d = cv2.absdiff(small_a, small_b)
     _, m = cv2.threshold(d, DUP_LEVEL - 1, 255, cv2.THRESH_BINARY)
-    return cv2.countNonZero(m) / d.size < DUP_SHARE
+    return cv2.countNonZero(m) / d.size
+
+
+def dup_cpu(small_a, small_b):
+    return change_cpu(small_a, small_b) < DUP_SHARE
 
 
 def app_dir():
@@ -310,9 +316,12 @@ class CudaEngine:
     def small(self, x):
         return self.cache.get(x, "small", self._small)
 
-    def is_dup(self, prev, cur):
+    def change(self, prev, cur):
         d = (self.small(cur) - self.small(prev)).abs()
-        return (d >= DUP_LEVEL - 0.5).float().mean().item() < DUP_SHARE
+        return (d >= DUP_LEVEL - 0.5).float().mean().item()
+
+    def is_dup(self, prev, cur):
+        return self.change(prev, cur) < DUP_SHARE
 
     def tiny(self, x):
         return self.cache.get(x, "tiny", lambda h: self.F.adaptive_avg_pool2d(self.small(h), (18, 32))[0, 0]
@@ -458,8 +467,11 @@ class DmlEngine:
             frame = cv2.resize(frame, (self.W, self.H), interpolation=interp)
         return np.ascontiguousarray(frame)
 
+    def change(self, prev, cur):
+        return change_cpu(self.cache.get(prev, "small", small_gray), self.cache.get(cur, "small", small_gray))
+
     def is_dup(self, prev, cur):
-        return dup_cpu(self.cache.get(prev, "small", small_gray), self.cache.get(cur, "small", small_gray))
+        return self.change(prev, cur) < DUP_SHARE
 
     def tiny(self, f):
         return self.cache.get(f, "tiny", lambda h: cv2.resize(self.cache.get(h, "small", small_gray), (32, 18),
