@@ -110,6 +110,8 @@ A capture card stays the recommended way.
                          about one CPU core less (NVIDIA build; auto = brute when possible, else opencv)
 --plage auto|limitee|pleine   colour range for raw capture (auto = what the card reports, else limited)
 --mesures                time of each stage in the counter and the log (D toggles it)
+--doublons auto|strict|tolerant   repeated-frame test: strict for a capture card, tolerant (helped by the
+                         frame cadence) for a compressed picture such as Remote Play; auto = by source
 --audio-delay MS, --no-audio
 --test                   animated test picture instead of the capture card
 --show-taskbar           shows the taskbar again if the app was killed
@@ -127,6 +129,7 @@ python smooth.py --res 1440p --x 3
 ```
 
 - `tools/export_onnx.py` rebuilds the ONNX models from `models/flownet_v4.6.pkl`.
+- `tools/cadence_check.py recording.mp4` runs a recording (e.g. PS Remote Play captured at 60 fps) through the app's repeated-frame and scene-cut decisions and reports the real frame rate it finds.
 - `build.ps1` builds both releases with PyInstaller.
 
 ---
@@ -146,7 +149,7 @@ Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. Une fen
 
 **Touches :** Échap quitter · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son · F mise à l'échelle fine/bilinéaire · C couleurs BT.709/BT.601 · D temps de chaque étape
 
-**Sans boîtier de capture :** choisis **PS Remote Play (sans boîtier)** dans la fenêtre de réglages. Attention : **plus de latence** (50 à 100 ms de plus qu'avec un boîtier, à cause de la compression et du réseau) et image compressée, en 1080p au maximum. Lance PS Remote Play et affiche ton jeu avant, et garde sa fenêtre ouverte (pas réduite). La manette reste active dans Remote Play, et le son vient de Remote Play.
+**Sans boîtier de capture :** choisis **PS Remote Play (sans boîtier)** dans la fenêtre de réglages. Attention : **plus de latence** (50 à 100 ms de plus qu'avec un boîtier, à cause de la compression et du réseau) et image compressée, en 1080p au maximum. Lance PS Remote Play et affiche ton jeu avant, et garde sa fenêtre ouverte (pas réduite). La manette reste active dans Remote Play, et le son vient de Remote Play. Comme l'image est compressée, les images répétées par la console ne reviennent pas tout à fait identiques : Capture Smooth les repère en s'aidant de la cadence du jeu (option `--doublons`).
 
 **À savoir :**
 

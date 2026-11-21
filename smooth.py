@@ -109,12 +109,8 @@ class State:
         self.cuts = cuts
 
 
-# Scene cuts (camera cut, cutscene, respawn): an in-between of two unrelated pictures is a ghostly blend,
-# so the new picture is shown directly. Measured on GTA 6 driving footage with fast turns: on a 32x18
-# thumbnail, motion never jumped above 12 levels AND 3x the recent average at once (0 / 1952 pairs),
-# while 98.7% of cuts did.
-CUT_LEVEL = 12.0
-CUT_RATIO = 3.0
+# Copy or new frame, game frame period and scene cuts: see cadence.py.
+from cadence import Cadence, SceneCuts  # noqa: E402
 
 
 # ---------------------------------------------------------------- sources
@@ -421,9 +417,10 @@ class Worker(threading.Thread):
     """Feeds captured frames to the AI engine and schedules in-betweens and real frames on the display.
     Frames reach the display as RGBA bytes (the fastest texture upload by far)."""
 
-    def __init__(self, src, display, state, stats, engine):
+    def __init__(self, src, display, state, stats, engine, tolerant=False):
         super().__init__(daemon=True)
         self.src, self.display, self.state, self.stats, self.engine = src, display, state, stats, engine
+        self.tolerant = tolerant  # compressed source (Remote Play): copies are only nearly identical
         self.error = None
 
     def run(self):
@@ -438,9 +435,8 @@ class Worker(threading.Thread):
         eng = self.engine
         last_seq = 0
         prev = None
-        period = 1.0 / max(self.src.fps or 60, 1)
-        last_t = None
-        motion = collections.deque(maxlen=8)  # recent thumbnail changes between real frames
+        cadence = Cadence(self.tolerant, 1.0 / max(self.src.fps or 60, 1))
+        cuts = SceneCuts()
         ai_s = real_s = 0.0  # running averages: one in-between, one real frame (seconds)
         k_auto = None
         pending = collections.deque()  # stage timers whose GPU work may still be running
@@ -466,17 +462,17 @@ class Worker(threading.Thread):
             probe.mark("conversion")
 
             probe.mark()
-            dup = prev is not None and eng.is_dup(prev, cur)
+            if prev is None:
+                cadence.accept(1.0, t_in)
+                dup = False
+            else:
+                dup = cadence.is_dup(eng.change(prev, cur), t_in)
             probe.mark("doublons")
             if dup:
                 with self.stats.lock:
                     self.stats.dups += 1
                 continue
-            if last_t is not None:
-                dt = t_in - last_t
-                if dt < 2.5 * period:
-                    period = min(max(0.85 * period + 0.15 * dt, 1 / 240), 1 / 20)
-            last_t = t_in
+            period = cadence.period  # game frame period, from the arrival of recent new frames
             with self.stats.lock:
                 self.stats.inp += 1
 
@@ -485,15 +481,11 @@ class Worker(threading.Thread):
             probe.mark()
             if prev is not None:
                 change = float(np.abs(eng.tiny(cur) - eng.tiny(prev)).mean())
-                if self.state.cuts and len(motion) >= 4 and change > CUT_LEVEL \
-                        and change > CUT_RATIO * (float(np.median(motion)) + 1.0):
+                if cuts.is_cut(change, self.state.cuts):
                     cut = True
-                    motion.clear()
                     eng.reset_history()
                     with self.stats.lock:
                         self.stats.cuts += 1
-                else:
-                    motion.append(change)
             probe.mark("analyse")
 
             k = self.state.mult if self.state.on else 1
@@ -1044,6 +1036,9 @@ def main():
     ap.add_argument("--plage", choices=["auto", "limitee", "pleine"], default="auto",
                     help="plage de couleurs du boîtier en capture brute (auto = ce que le boîtier annonce, "
                          "sinon limitée, le réglage par défaut des consoles)")
+    ap.add_argument("--doublons", choices=["auto", "strict", "tolerant"], default="auto",
+                    help="repérage des images répétées : strict = boîtier (copies identiques), tolérant = image "
+                         "compressée (Remote Play), qui s'aide de la cadence ; auto = selon la source")
     ap.add_argument("--mesures", action="store_true",
                     help="affiche le temps de chaque étape dans le compteur (touche D)")
     ap.add_argument("--couleurs", choices=["auto", "709", "601"], default="auto",
@@ -1164,7 +1159,8 @@ def main():
         else:  # converted by OpenCV on the CPU (BT.601): the display fixes the colours, as with the old source
             display.fix_709 = src.bt709
             print("  (moteur DirectML : couleurs converties par le processeur)")
-    worker = Worker(src, display, state, stats, engine)
+    tolerant = args.doublons == "tolerant" or (args.doublons == "auto" and isinstance(src, WindowSource))
+    worker = Worker(src, display, state, stats, engine, tolerant)
     print(f"Prêt. Moteur {engine.name}, image {work[0]}x{work[1]}, IA échelle {scale}, x{args.x}, "
           f"écran {display.refresh} Hz.")
     audio = None
