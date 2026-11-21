@@ -50,7 +50,8 @@ if ($Only -ne "DirectML") {
         --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module scipy --exclude-module pandas `
         --exclude-module transformers --exclude-module tensorboard --exclude-module IPython --exclude-module triton `
         --exclude-module sklearn --exclude-module PIL --exclude-module accelerate --exclude-module diffusers `
-        smooth.py
+        --exclude-module nvvfx --hidden-import dataclasses --hidden-import numbers --hidden-import contextlib `
+        smooth.py  # nvvfx (NVIDIA licence) is never shipped: downloaded by the user, it needs these stdlib modules
     if ($LASTEXITCODE) { throw "build NVIDIA" }
     Finish "CaptureSmooth-NVIDIA"
 }

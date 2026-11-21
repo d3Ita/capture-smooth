@@ -10,7 +10,13 @@ from pathlib import Path
 
 SETTINGS = Path(os.environ.get("APPDATA", Path.home())) / "CaptureSmooth" / "settings.json"
 DEFAULTS = {"source": "capture", "res": "1440p", "game": "30", "mult": "max", "audio": True, "counter": True,
-            "sharp": 30, "hud": True}
+            "sharp": 30, "hud": True, "engine": "vfg"}
+
+
+def nvidia_build():
+    """The NVIDIA build (PyTorch inside) can run NVIDIA Frame Generation; the DirectML one cannot."""
+    import importlib.util
+    return importlib.util.find_spec("torch") is not None
 
 
 def load():
@@ -28,6 +34,105 @@ def save(s):
         pass
 
 
+def vfg_installed():
+    try:
+        from vfg_download import installed
+        return installed()
+    except Exception:
+        return False
+
+
+def vfg_dialog(root, on_done, engine):
+    """Explains NVIDIA's module and licence, asks for acceptance, downloads it with a progress bar."""
+    import threading
+    import tkinter as tk
+    import webbrowser
+    from tkinter import ttk
+
+    import vfg_download as vd
+
+    win = tk.Toplevel(root)
+    win.title("NVIDIA Frame Generation")
+    win.resizable(False, False)
+    win.transient(root)
+    win.grab_set()
+    f = ttk.Frame(win, padding=16)
+    f.grid()
+    ttk.Label(f, text="NVIDIA Frame Generation", font=("Segoe UI", 13, "bold")).grid(row=0, column=0, sticky="w")
+    ttk.Label(f, wraplength=470, justify="left", text=(
+        "Ce module appartient à NVIDIA et n'est pas fourni avec Capture Smooth. Il est téléchargé directement "
+        f"depuis le site de NVIDIA (pypi.nvidia.com, version {vd.VERSION}, {vd.SIZE / 2**20:.0f} Mo), vérifié, puis "
+        "installé pour ton compte seulement. Il demande une carte GeForce RTX ; sinon Capture Smooth garde RIFE.\n\n"
+        "Son utilisation est soumise à la licence de NVIDIA, que tu dois lire et accepter :")).grid(
+        row=1, column=0, sticky="w", pady=(6, 4))
+    for i, (label, url) in enumerate(vd.LICENCES):
+        link = tk.Label(f, text=label, fg="#3557c4", cursor="hand2", font=("Segoe UI", 9, "underline"))
+        link.grid(row=2 + i, column=0, sticky="w", padx=(12, 0))
+        link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+    accept = tk.BooleanVar(value=False)
+    ttk.Checkbutton(f, text="J'ai lu la licence de NVIDIA et je l'accepte", variable=accept).grid(
+        row=4, column=0, sticky="w", pady=(10, 4))
+    bar = ttk.Progressbar(f, length=470, maximum=1000)
+    bar.grid(row=5, column=0, sticky="ew", pady=(4, 2))
+    status = ttk.Label(f, foreground="#666", text="")
+    status.grid(row=6, column=0, sticky="w")
+    btns = ttk.Frame(f)
+    btns.grid(row=7, column=0, sticky="e", pady=(10, 0))
+    go = ttk.Button(btns, text="Télécharger", state="disabled")
+    go.pack(side="right")
+    close = ttk.Button(btns, text="Annuler")
+    close.pack(side="right", padx=8)
+    accept.trace_add("write", lambda *_: go.config(state="normal" if accept.get() else "disabled"))
+
+    state = {"done": 0, "total": vd.SIZE, "result": None, "thread": None}
+    cancel = threading.Event()
+
+    def work():
+        try:
+            vd.download(lambda d, t: state.update(done=d, total=t), cancel)
+            state["result"] = "ok"
+        except vd.Cancelled:
+            state["result"] = "cancelled"
+        except Exception as e:
+            state["result"] = f"Échec : {e}"
+
+    def poll():
+        bar["value"] = 1000 * state["done"] / max(state["total"], 1)
+        if state["result"] is None:
+            if state["done"] >= state["total"]:
+                status.config(text="Vérification et installation…")
+            else:
+                status.config(text=f"{state['done'] / 2**20:.0f} / {state['total'] / 2**20:.0f} Mo")
+            win.after(200, poll)
+        elif state["result"] == "ok":
+            engine.set("vfg")
+            win.destroy()
+            on_done()
+        elif state["result"] == "cancelled":
+            win.destroy()
+        else:
+            status.config(text=state["result"], foreground="#b91c1c")
+            go.config(state="normal")
+
+    def start():
+        go.config(state="disabled")
+        state.update(done=0, result=None)
+        state["thread"] = threading.Thread(target=work, daemon=True)
+        state["thread"].start()
+        poll()
+
+    def stop():
+        if state["thread"] is not None and state["result"] is None:
+            cancel.set()  # poll() closes the window once the download stopped
+            status.config(text="Annulation…")
+        else:
+            win.destroy()
+
+    go.config(command=start)
+    close.config(command=stop)
+    win.protocol("WM_DELETE_WINDOW", stop)
+
+
 def to_args(s, test=False):
     game = int(s["game"])
     x = (3 if game == 30 else 2) if s["mult"] == "max" else 2
@@ -41,6 +146,8 @@ def to_args(s, test=False):
     args += ["--nettete", str(int(s["sharp"]))]
     if not s["hud"]:
         args.append("--no-hud")
+    if s.get("engine") == "rife":
+        args += ["--moteur", "rife"]
     if test:
         args += ["--test", "--windowed", "--test-game-fps", str(game)]
     return args
@@ -63,6 +170,7 @@ def choose(title="Capture Smooth"):
     pad = {"padx": 14, "pady": 4}
     frm = ttk.Frame(root, padding=12)
     frm.grid()
+    engine = tk.StringVar(value=s.get("engine", "vfg"))
 
     ttk.Label(frm, text=title, font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", **pad)
     ttk.Label(frm, text="Images intermédiaires par IA pour ta console",
@@ -112,8 +220,10 @@ def choose(title="Capture Smooth"):
     def update_hint(*_):
         g = int(game.get())
         x = (3 if g == 30 else 2) if mult.get() == "max" else 2
-        lat = {(30, 3): 32, (30, 2): 26, (60, 2): 19}.get((g, x), 25)
-        hint.config(text=f"Affichage : {g * x} fps  ·  retard ajouté ≈ {lat} ms (RTX 4070 SUPER)")
+        # Measured with the test picture at 1440p (RTX 4070 SUPER).
+        vfg = engine.get() == "vfg" and nvidia_build() and vfg_installed()
+        table = {(30, 3): 30, (30, 2): 25, (60, 2): 15} if vfg else {(30, 3): 32, (30, 2): 27, (60, 2): 18}
+        hint.config(text=f"Affichage : {g * x} fps  ·  retard ajouté ≈ {table.get((g, x), 25)} ms (RTX 4070 SUPER)")
 
     for v in (game, mult):
         v.trace_add("write", update_hint)
@@ -138,17 +248,43 @@ def choose(title="Capture Smooth"):
     ttk.Checkbutton(box, text="Protéger le HUD (mini-carte, textes fixes)", variable=hud).grid(
         row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
+    row = 6
+    if nvidia_build():
+        ebox = ttk.LabelFrame(frm, text=" Moteur IA ", padding=8)
+        ebox.grid(row=row, column=0, columnspan=2, sticky="ew", **pad)
+        row += 1
+
+        def render_engine():
+            from vfg_download import installed
+            for w in ebox.winfo_children():
+                w.destroy()
+            if installed():
+                ttk.Radiobutton(ebox, text="NVIDIA Frame Generation (cartes RTX) : plus fidèle et plus rapide",
+                                variable=engine, value="vfg").grid(row=0, column=0, sticky="w")
+                ttk.Radiobutton(ebox, text="RIFE (intégré)", variable=engine, value="rife").grid(
+                    row=1, column=0, sticky="w")
+            else:
+                ttk.Label(ebox, wraplength=440, justify="left", foreground="#444",
+                          text="NVIDIA Frame Generation : la génération d'images de NVIDIA, plus fidèle et plus "
+                               "rapide que RIFE sur les cartes RTX. Module de NVIDIA à télécharger (416 Mo, licence NVIDIA).").grid(
+                    row=0, column=0, sticky="w")
+                ttk.Button(ebox, text="Télécharger…", command=lambda: vfg_dialog(root, render_engine, engine)).grid(
+                    row=1, column=0, sticky="w", pady=(6, 0))
+            update_hint()
+
+        engine.trace_add("write", lambda *_: update_hint())
+
     audio = tk.BooleanVar(value=s["audio"])
     counter = tk.BooleanVar(value=s["counter"])
-    ttk.Checkbutton(frm, text="Son du boîtier", variable=audio).grid(row=6, column=0, sticky="w", **pad)
-    ttk.Checkbutton(frm, text="Compteur fps (F1)", variable=counter).grid(row=6, column=1, sticky="w", **pad)
+    ttk.Checkbutton(frm, text="Son du boîtier", variable=audio).grid(row=row, column=0, sticky="w", **pad)
+    ttk.Checkbutton(frm, text="Compteur fps (F1)", variable=counter).grid(row=row, column=1, sticky="w", **pad)
 
     ttk.Label(frm, text="Ferme OBS avant de lancer.  Échap = quitter · Espace = IA on/off · S = netteté · M = son",
-              foreground="#666").grid(row=7, column=0, columnspan=2, sticky="w", padx=14, pady=(8, 4))
+              foreground="#666").grid(row=row + 1, column=0, columnspan=2, sticky="w", padx=14, pady=(8, 4))
 
     def current():
         return {"source": source.get(), "res": res.get(), "game": game.get(), "mult": mult.get(), "audio": audio.get(),
-                "counter": counter.get(), "sharp": sharp.get(), "hud": hud.get()}
+                "counter": counter.get(), "sharp": sharp.get(), "hud": hud.get(), "engine": engine.get()}
 
     def go(test=False):
         c = current()
@@ -156,8 +292,10 @@ def choose(title="Capture Smooth"):
         result["args"] = to_args(c, test)
         root.destroy()
 
+    if nvidia_build():
+        render_engine()
     btns = ttk.Frame(frm)
-    btns.grid(row=8, column=0, columnspan=2, sticky="ew", padx=14, pady=(10, 2))
+    btns.grid(row=row + 2, column=0, columnspan=2, sticky="ew", padx=14, pady=(10, 2))
     # One obvious button to play; the test picture is only a small link, so it is not clicked by mistake.
     start = tk.Button(btns, text="▶   Lancer le jeu", command=go, font=("Segoe UI", 12, "bold"), fg="white",
                       bg="#6d4ce0", activebackground="#8466f0", activeforeground="white", relief="flat",

@@ -79,6 +79,12 @@ Capture Smooth can also take the picture from the official **PS Remote Play** ap
 
 A capture card stays the recommended way.
 
+## Optional: NVIDIA Frame Generation (RTX cards)
+
+On a GeForce RTX card, the settings window of the NVIDIA build offers **NVIDIA Frame Generation** (the Video Frame Generation feature of NVIDIA's Video Effects SDK) instead of RIFE. On GTA 6 at 1440p it was closer to the real frames than RIFE 4.6 (26.9 dB against 26.2 dB in moving areas, better on 71 of 89 frames) and about 3 ms faster per frame.
+
+It is **not shipped with Capture Smooth**: it is NVIDIA's software under NVIDIA's proprietary licence. The **Télécharger…** button shows that licence and, once you accept it, downloads the module from NVIDIA's package index (pypi.nvidia.com, 416 MB). The file is checked against its published SHA-256 and kept in `%LOCALAPPDATA%\CaptureSmooth\nvidia-vfx`. Delete that folder to remove it. When running from source, `pip install --index-url https://pypi.nvidia.com nvidia-vfx` works too.
+
 ## Setup tips
 
 1. **Close OBS and your capture card's software** before starting, because they lock the device.
@@ -97,7 +103,8 @@ A capture card stays the recommended way.
 --source capture|remoteplay   capture card (default) or the PS Remote Play window
 --window "title"         window to capture with --source remoteplay (default "PS Remote Play")
 --device auto|"name"|N   capture device (--list shows them)
---moteur auto|cuda|directml
+--moteur auto|vfg|rife|cuda|directml   vfg = NVIDIA Frame Generation (optional download, RTX)
+--vfg-qualite basse|moyenne|haute   NVIDIA Frame Generation quality (haute: ~15 ms per frame, x2 only)
 --quality rapide|normal  normal = flow at full resolution (sharper, twice slower; 1080p only)
 --mode sans-bordure|plein-ecran|fenetre
 --vsync                  no tearing without G-Sync (adds latency)
@@ -158,6 +165,7 @@ Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. Une fen
 - **Si la console refuse le 1440p** (« ton écran ne le prend pas en charge ») : dans le logiciel du boîtier, mets l'**EDID** sur *interne*, puis débranche et rebranche la console.
 - **HDR désactivé** sur la console.
 - **G-Sync** : active-le aussi pour le mode fenêtré.
+- **NVIDIA Frame Generation** (cartes RTX, version NVIDIA) : dans la fenêtre de réglages, le bouton **Télécharger…** propose la génération d'images de NVIDIA, plus fidèle que RIFE et environ 3 ms plus rapide par image. Ce module appartient à NVIDIA et n'est pas fourni avec Capture Smooth : il est téléchargé depuis le site de NVIDIA (416 Mo) après acceptation de la licence NVIDIA, et rangé dans `%LOCALAPPDATA%\CaptureSmooth\nvidia-vfx` (supprime ce dossier pour l'enlever).
 - **Capture brute** (version NVIDIA) : le boîtier est lu sans conversion par le processeur, et les couleurs sont converties sur la carte graphique (environ un cœur de processeur libéré). Si ça ne marche pas avec ton boîtier, l'app revient toute seule à l'ancienne méthode ; tu peux aussi la forcer avec `--capture opencv`.
 - **Barre des tâches :** l'appli la cache pendant qu'elle tourne. Si elle reste cachée après un plantage, lance `Reafficher la barre des taches.cmd`.
 

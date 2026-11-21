@@ -164,10 +164,9 @@ class GpuFrame:
 class CudaEngine:
     name = "CUDA"
 
-    def __init__(self, src_size, work_size, scale, use_graphs=True):
+    def __init__(self, src_size, work_size, scale, use_graphs=True, rife=True):
         import torch
         import torch.nn.functional as F
-        from rife import load_model
 
         if not torch.cuda.is_available():
             raise RuntimeError("pas de carte NVIDIA compatible CUDA")
@@ -188,8 +187,13 @@ class CudaEngine:
         self.scale = scale
         self.pinned = {}  # frame shape -> staging buffers in page-locked memory (see to_gpu)
         self.pin_i = 0
-        self.net = load_model(app_dir() / "models" / "flownet_v4.6.pkl", half=self.dtype == torch.half)
-        self.ph, self.pw = padded(self.H, self.W, scale, self.net.align)
+        if rife:
+            from rife import load_model
+            self.net = load_model(app_dir() / "models" / "flownet_v4.6.pkl", half=self.dtype == torch.half)
+            self.ph, self.pw = padded(self.H, self.W, scale, self.net.align)
+        else:  # another network makes the in-betweens (VfgEngine): no padding needed
+            self.net = None
+            self.ph, self.pw = self.H, self.W
         self.use_graphs = use_graphs
         self.graphs = {}  # t -> (CUDA graph, its RGBA output)
         # Fixed input slots for the CUDA graphs (a graph always reads the same memory).
@@ -405,6 +409,62 @@ class CudaEngine:
 
     def real(self, cur):
         return self.emit(self.rgba_into(cur, self.rgba))
+
+
+VFG_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "CaptureSmooth" / "nvidia-vfx"
+VFG_QUALITY = {"basse": 0, "moyenne": 1, "haute": 2}  # nvvfx Mode LOW / MEDIUM / HIGH
+
+
+def vfg_available():
+    """True if NVIDIA's package can be imported: installed with pip, or downloaded by the settings window into
+    VFG_DIR (it is not shipped with Capture Smooth: see vfg_download.py)."""
+    import importlib.util
+    if (VFG_DIR / "nvvfx").is_dir() and str(VFG_DIR) not in sys.path:
+        sys.path.insert(0, str(VFG_DIR))
+    return importlib.util.find_spec("nvvfx") is not None
+
+
+class VfgEngine(CudaEngine):
+    """NVIDIA Video Frame Generation (Video Effects SDK, RTX cards) instead of RIFE for the in-betweens. The rest is
+    the CUDA engine's: upload, copy test, HUD protection and sharpening (post.py), display.
+    Measured on GTA 6 at 1440p (RTX 4070 SUPER), rebuilding real frame N+1 from N and N+2: MEDIUM 26.9 dB in moving
+    areas against 26.2 dB for RIFE 4.6, better on 71 of 89 triplets, 2.6 ms per in-between against 7.1 ms."""
+    name = "NVIDIA VFG"
+
+    def __init__(self, src_size, work_size, quality="moyenne"):
+        if not vfg_available():
+            raise RuntimeError("module NVIDIA Frame Generation non installé")
+        from nvvfx import VideoFrameGeneration
+        super().__init__(src_size, work_size, 1.0, use_graphs=False, rife=False)
+        self.quality = quality
+        # Scene cuts are found by Capture Smooth itself (cadence.py), which then shows the new picture directly.
+        self.vfg = VideoFrameGeneration(mode=VFG_QUALITY[quality], automatic_shot_change_detection_enabled=False)
+        self.vfg.input_width, self.vfg.input_height = self.W, self.H
+        self.vfg.load()
+        self.f0 = self.f1 = None
+
+    def set_pair(self, prev, cur):
+        super().set_pair(prev, cur)  # slots and HUD mask, as with RIFE
+        self.f0 = self.slot0[0].float()  # the SDK takes (3, H, W) float32 on the GPU
+        self.f1 = self.slot1[0].float()
+
+    def interp(self, t):
+        # Same stream as the rest of the frame; the output buffer is reused by the next run, which is queued
+        # after the conversion below on that stream, so no copy is needed.
+        out = self.vfg.run_at_timestep(self.f0, self.f1, float(t), non_blocking=True,
+                                       stream_ptr=self.torch.cuda.current_stream().cuda_stream)
+        x = self.torch.from_dlpack(out.image)[None].to(self.dtype)
+        return self.emit(self.rgba_into(x, self.rgba, True))
+
+    def warmup(self):
+        torch = self.torch
+        with torch.inference_mode():
+            x = torch.rand(1, 3, self.H, self.W, device="cuda", dtype=self.dtype)
+            self.set_pair(x, x)
+            for t in (0.5, 1 / 3, 2 / 3):
+                self.interp(t)
+            self.real(x)
+        torch.cuda.synchronize()
 
 
 def onnx_name(w, h, scale):
