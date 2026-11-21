@@ -53,13 +53,48 @@ class Stats:
         self.ai_ms = 0.0
         self.ai_n = 0
         self.lat = []
+        self.stages = {}  # stage -> [total ms, frames, times]: see stage()
+        self.since = now()
+
+    def stage(self, name, ms, times=1):
+        """Adds one frame's time for a stage (a stage can run several times per frame: in-betweens)."""
+        with self.lock:
+            s = self.stages.setdefault(name, [0.0, 0, 0])
+            s[0] += ms
+            s[1] += 1
+            s[2] += times
 
     def snapshot(self):
         with self.lock:
             s = (self.inp, self.dups, self.out, self.dropped, self.ai_ms / max(self.ai_n, 1),
-                 sum(self.lat) / len(self.lat) if self.lat else 0.0, self.cuts)
+                 sum(self.lat) / len(self.lat) if self.lat else 0.0, self.cuts, self.stages, now() - self.since)
             self.reset()
         return s
+
+
+# Stage names shown in the detail (D key). Wall clock, per real frame, adding up to the added delay:
+DELAY_PARTS = (("attente", "attente"), ("calcul", "calcul"), ("file", "file"), ("affichage", "affichage"))
+# Graphics card time (CUDA events, OpenGL timer; wall clock with DirectML), per real frame or per image:
+GPU_PARTS = (("envoi", "envoi"), ("conversion", "conv"), ("doublons", "doublons"), ("analyse", "analyse"),
+             ("interpolation", "IA/img"), ("finition", "finition"), ("echelle", "echelle/img"))
+PER_IMAGE = ("interpolation", "echelle")
+
+
+def detail_lines(stages, lat, elapsed):
+    """Three short ASCII lines (the OpenCV font has no accents) with the measured time of each stage."""
+    def avg(name):
+        s = stages.get(name)
+        if not s:
+            return None
+        return s[0] / (s[2] if name in PER_IMAGE else s[1])
+
+    parts = [(label, avg(name)) for name, label in DELAY_PARTS]
+    total = " + ".join(f"{label} {v:.1f}" for label, v in parts if v is not None)
+    line1 = f"retard {lat:.1f} ms = {total}" if total else "retard : pas encore de vraie image"
+    line2 = "ms : " + "  ".join(f"{label} {avg(name):.1f}" for name, label in GPU_PARTS if avg(name) is not None)
+    busy = sum(stages[name][0] for name, _ in GPU_PARTS if name in stages)
+    line3 = f"carte graphique occupee {busy / max(elapsed * 1000, 1) * 100:.0f}% du temps (conseille : moins de 70%)"
+    return [line1, line2, line3]
 
 
 class State:
@@ -338,14 +373,32 @@ class Worker(threading.Thread):
         motion = collections.deque(maxlen=8)  # recent thumbnail changes between real frames
         ai_s = real_s = 0.0  # running averages: one in-between, one real frame (seconds)
         k_auto = None
+        pending = collections.deque()  # stage timers whose GPU work may still be running
+
+        def collect():
+            while pending and (pending[0].ready() or len(pending) > 16):
+                p = pending.popleft()
+                p.wait()
+                for name, (ms, times) in p.result().items():
+                    self.stats.stage(name, ms, times)
+
         while self.state.running:
             item = self.src.wait_new(last_seq, 0.2)
+            collect()
             if item is None:
                 continue
             frame, t_in, last_seq = item
-            cur = eng.upload(frame)
+            t_pick = now()
+            probe = eng.probe()
+            pending.append(probe)
+            probe.mark()
+            cur = eng.upload(frame, probe)
+            probe.mark("conversion")
 
-            if prev is not None and eng.is_dup(prev, cur):
+            probe.mark()
+            dup = prev is not None and eng.is_dup(prev, cur)
+            probe.mark("doublons")
+            if dup:
                 with self.stats.lock:
                     self.stats.dups += 1
                 continue
@@ -359,6 +412,7 @@ class Worker(threading.Thread):
 
             eng.set_options(self.state.sharpness if self.state.sharp_on else 0.0, self.state.hud)
             cut = False
+            probe.mark()
             if prev is not None:
                 change = float(np.abs(eng.tiny(cur) - eng.tiny(prev)).mean())
                 if self.state.cuts and len(motion) >= 4 and change > CUT_LEVEL \
@@ -370,11 +424,15 @@ class Worker(threading.Thread):
                         self.stats.cuts += 1
                 else:
                     motion.append(change)
+            probe.mark("analyse")
 
             k = self.state.mult if self.state.on else 1
             if prev is None or k == 1 or cut:
                 t0 = now()
-                self.display.push(eng.real(cur), now(), t_in)
+                probe.mark()
+                real = eng.real(cur)
+                probe.mark("finition")
+                self.display.push(real, now(), t_in, t_pick)
                 real_s = 0.8 * real_s + 0.2 * (now() - t0)
                 prev = cur
                 continue
@@ -397,14 +455,18 @@ class Worker(threading.Thread):
             k = k_auto
 
             # In-betweens first: the real frame is only shown after them, so it can wait.
+            probe.mark()
             eng.set_pair(prev, cur)
+            probe.mark("analyse")
             base = None
             next_expected = t_in + period
             for i in range(1, k):
                 if i > 1 and now() > next_expected:
                     break  # the next game frame is due: drop the remaining in-betweens to keep latency down
                 t0 = now()
+                probe.mark()
                 img = eng.interp(i / k)
+                probe.mark("interpolation")
                 if hasattr(img, "event"):  # GPU frame: wait until it is really computed, for honest pacing
                     img.event.synchronize()
                 done = now()
@@ -416,15 +478,60 @@ class Worker(threading.Thread):
                     base = done
                 self.display.push(img, base + (i - 1) * period / k, None)
             t0 = now()
+            probe.mark()
             real = eng.real(cur)
+            probe.mark("finition")
             if hasattr(real, "event"):
                 real.event.synchronize()
             real_s = 0.8 * real_s + 0.2 * (now() - t0)
-            self.display.push(real, max(now(), base + (k - 1) * period / k), t_in)
+            self.display.push(real, max(now(), base + (k - 1) * period / k), t_in, t_pick)
             prev = cur
 
 
 # ---------------------------------------------------------------- display
+
+class GlTimer:
+    """Graphics card time of a piece of drawing (OpenGL timer queries), read a few frames later so the
+    display never waits for the result."""
+
+    def __init__(self, n=6):
+        from OpenGL.GL import glGenQueries
+        self.ids = [int(q) for q in glGenQueries(n)]
+        self.free = collections.deque(self.ids)
+        self.busy = collections.deque()
+        self.current = None
+
+    def begin(self):
+        from OpenGL.GL import GL_TIME_ELAPSED, glBeginQuery
+        if self.free:  # all queries still waiting for the card: skip this one
+            self.current = self.free.popleft()
+            glBeginQuery(GL_TIME_ELAPSED, self.current)
+
+    def end(self):
+        from OpenGL.GL import GL_TIME_ELAPSED, glEndQuery
+        if self.current is not None:
+            glEndQuery(GL_TIME_ELAPSED)
+            self.busy.append(self.current)
+            self.current = None
+
+    def results(self):
+        """Finished timings, in ms."""
+        import ctypes
+        from OpenGL.GL import GL_QUERY_RESULT, GL_QUERY_RESULT_AVAILABLE
+        from OpenGL.raw.GL.VERSION.GL_1_5 import glGetQueryObjectiv
+        from OpenGL.raw.GL.VERSION.GL_3_3 import glGetQueryObjectui64v  # raw calls: PyOpenGL's wrappers fail on 64-bit
+        out = []
+        avail, ns = ctypes.c_int(0), ctypes.c_uint64(0)
+        while self.busy:
+            glGetQueryObjectiv(self.busy[0], GL_QUERY_RESULT_AVAILABLE, ctypes.byref(avail))
+            if not avail.value:
+                break
+            q = self.busy.popleft()
+            glGetQueryObjectui64v(q, GL_QUERY_RESULT, ctypes.byref(ns))
+            out.append(ns.value / 1e6)
+            self.free.append(q)
+        return out
+
 
 class Display:
     def __init__(self, size, mode_name, vsync, state, stats, focus_target=None, sharp_scaling=True, fix_709=False):
@@ -485,6 +592,12 @@ class Display:
         except Exception as e:  # very old driver: hardware bilinear, no colour fix
             print(f"(mise à l'échelle fine indisponible : {e})")
             self.presenter = None
+        try:
+            self.timer = GlTimer()
+        except Exception as e:
+            print(f"(mesure du temps d'affichage indisponible : {e})")
+            self.timer = None
+        self.detail = False  # D key: time of each stage in the counter
 
         # Small on-screen counter (top-left), toggled with F1 or I.
         self.snapshot = None  # (path, time): save one displayed frame, for checking the app
@@ -507,14 +620,19 @@ class Display:
         self.overlay_ver += 1
 
     def render_overlay(self):
-        fps, line2, line3 = self.overlay_info
-        w, h = 500, 98
+        fps, line2, line3, extra = self.overlay_info
+        extra = extra if self.detail else []
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        w = max([500] + [cv2.getTextSize(t, font, 0.5, 1)[0][0] + 24 for t in [line2, line3] + extra])
+        h = 98 + 22 * len(extra)
         img = np.zeros((h, w, 4), np.uint8)
         img[:] = (0, 0, 0, 150)
         color = (120, 230, 120, 255) if fps >= 100 else (80, 210, 255, 255) if fps >= 55 else (90, 90, 255, 255)
         cv2.putText(img, f"{fps:3d} FPS", (12, 38), cv2.FONT_HERSHEY_DUPLEX, 1.1, color, 2, cv2.LINE_AA)
-        cv2.putText(img, line2, (12, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (235, 235, 235, 255), 1, cv2.LINE_AA)
-        cv2.putText(img, line3, (12, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (170, 170, 170, 255), 1, cv2.LINE_AA)
+        cv2.putText(img, line2, (12, 64), font, 0.5, (235, 235, 235, 255), 1, cv2.LINE_AA)
+        cv2.putText(img, line3, (12, 86), font, 0.5, (170, 170, 170, 255), 1, cv2.LINE_AA)
+        for i, text in enumerate(extra):
+            cv2.putText(img, text, (12, 108 + 22 * i), font, 0.5, (150, 220, 255, 255), 1, cv2.LINE_AA)
         glBindTexture(GL_TEXTURE_2D, self.otex)
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, img)
         self.overlay_size = (w, h)
@@ -556,7 +674,7 @@ class Display:
 
     # Virtual-key codes read in Remote Play mode (the keyboard focus stays with Remote Play).
     GLOBAL_KEYS = {0x1B: "quit", 0x70: "counter", 0x49: "counter", 0x4D: "mute", 0x20: "ai", 0x53: "sharp",
-                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
+                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x44: "detail", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
 
     def poll_global_keys(self):
         import ctypes
@@ -576,7 +694,7 @@ class Display:
             return
         names = {glfw.KEY_ESCAPE: "quit", glfw.KEY_F1: "counter", glfw.KEY_I: "counter", glfw.KEY_M: "mute",
                  glfw.KEY_SEMICOLON: "mute", glfw.KEY_SPACE: "ai", glfw.KEY_S: "sharp", glfw.KEY_H: "hud",
-                 glfw.KEY_F: "scaling", glfw.KEY_C: "color",
+                 glfw.KEY_F: "scaling", glfw.KEY_C: "color", glfw.KEY_D: "detail",
                  glfw.KEY_2: 2, glfw.KEY_3: 3, glfw.KEY_4: 4, glfw.KEY_KP_2: 2, glfw.KEY_KP_3: 3, glfw.KEY_KP_4: 4}
         if key in names:  # M sits on ";" with an AZERTY keyboard
             self.act(names[key])
@@ -586,6 +704,10 @@ class Display:
             glfw.set_window_should_close(self.win, True)
         elif key == "counter":
             self.overlay_on = not self.overlay_on
+        elif key == "detail":
+            self.detail = not self.detail
+            self.overlay_on = self.overlay_on or self.detail
+            self.overlay_ver += 1  # redraw the counter at its new size
         elif key == "mute":
             if self.audio:
                 self.audio.muted = not self.audio.muted
@@ -641,9 +763,10 @@ class Display:
         glBindTexture(GL_TEXTURE_2D, self.tex)
         self.interop = CudaGLTexture(int(self.tex))
 
-    def push(self, img, target, t_in):
+    def push(self, img, target, t_in, t_pick=None):
+        """t_in: when the source published this real frame (None for an in-between); t_pick: when the worker took it."""
         with self.cond:
-            self.queue.append((target, img, t_in))
+            self.queue.append((target, img, t_in, t_pick, now()))
             self.cond.notify()
 
     def next_job(self):
@@ -673,11 +796,15 @@ class Display:
             self.interop.upload(img.tensor.data_ptr(), self.W, self.H)
         else:
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.W, self.H, GL_RGBA, GL_UNSIGNED_BYTE, img)  # RGBA: 5x faster than BGR
+        if self.timer:
+            self.timer.begin()
         if self.presenter:
             self.presenter.begin(self.W, self.H, vw, vh, self.sharp_scaling, self.fix_709)
         self.draw_quad()
         if self.presenter:
             self.presenter.end()
+        if self.timer:
+            self.timer.end()
         self.draw_overlay(ix, iy, vw, vh)
         if self.snapshot and now() >= self.snapshot[1]:
             from OpenGL.GL import GL_RGB, glReadPixels
@@ -697,14 +824,26 @@ class Display:
             job = self.next_job()
             if job is None:
                 continue
-            target, img, t_in = job
+            target, img, t_in, t_pick, t_ready = job
             sleep_until(target)
+            start = now()
             self.present(img)
             shown = now()
             with self.stats.lock:
                 self.stats.out += 1
                 if t_in is not None:
                     self.stats.lat.append((shown - t_in) * 1000)
+            if t_in is not None and t_pick is not None:  # the added delay of this real frame, in four parts
+                for name, a, b in (("attente", t_in, t_pick), ("calcul", t_pick, t_ready),
+                                   ("file", t_ready, start), ("affichage", start, shown)):
+                    self.stats.stage(name, (b - a) * 1000)
+            if self.timer:
+                try:
+                    for ms in self.timer.results():
+                        self.stats.stage("echelle", ms)
+                except Exception as e:
+                    print(f"\n(mesure du temps d'affichage arrêtée : {e})")
+                    self.timer = None
         glfw.terminate()
         from taskbar import show_taskbar
         show_taskbar()
@@ -825,6 +964,8 @@ def main():
     ap.add_argument("--no-cut", action="store_true", help="interpole aussi sur les changements de plan")
     ap.add_argument("--bilineaire", action="store_true",
                     help="ancienne mise à l'échelle vers l'écran, plus floue (touche F pour comparer)")
+    ap.add_argument("--mesures", action="store_true",
+                    help="affiche le temps de chaque étape dans le compteur (touche D)")
     ap.add_argument("--couleurs", choices=["auto", "709", "601"], default="auto",
                     help="matrice de couleurs du boîtier : auto = BT.709 si format non compressé en HD (touche C)")
     if len(sys.argv) == 1:  # double-click on the .exe: settings window
@@ -930,22 +1071,28 @@ def main():
         except Exception as e:
             print(f"Son : désactivé ({e})")
     display.audio = audio
-    display.overlay_on = not args.hide_counter
+    display.overlay_on = not args.hide_counter or args.mesures
+    display.detail = args.mesures
     print("Échap = quitter · Espace = IA on/off · 2/3/4 = multiplicateur · S = netteté · H = HUD · F1 = compteur · M = son\n"
-          "F = mise à l'échelle fine/bilinéaire · C = couleurs BT.709/BT.601\n")
+          "F = mise à l'échelle fine/bilinéaire · C = couleurs BT.709/BT.601 · D = temps de chaque étape\n")
 
     def report():
         while state.running:
             time.sleep(1)
-            inp, dups, out, dropped, ai, lat, cuts = stats.snapshot()
+            inp, dups, out, dropped, ai, lat, cuts, stages, elapsed = stats.snapshot()
+            detail = detail_lines(stages, lat, elapsed)
             line = (f"\rentrée {inp:3d} img/s (doublons {dups:3d}) | sortie {out:3d} img/s | "
                     f"IA {ai:4.1f} ms | retard ajouté ~{lat:4.1f} ms | sautées {dropped:3d}" +
                     (f" | changement de plan" if cuts else "") + "   ")
+            every_10s = int(now()) % 10 == 0
             if NO_CONSOLE:  # log file: one line every 10 s is enough
-                if int(now()) % 10 == 0:
+                if every_10s:
                     print(line.strip("\r "))
+                    print("  " + "\n  ".join(detail))
             else:
                 print(line, end="", flush=True)
+                if every_10s or display.detail:
+                    print("\n  " + "\n  ".join(detail))
             # Text for the on-screen counter (plain ASCII: the OpenCV font has no accents).
             mode = (f"x{state.mult}" if state.mult_eff >= state.mult else f"x{state.mult_eff} auto") if state.on \
                 else "interpolation OFF"
@@ -955,7 +1102,8 @@ def main():
                 f"{moving}  {mode}  IA {ai:.0f} ms  retard +{lat:.0f} ms",
                 f"{work[0]}x{work[1]}  net {int(state.sharpness * 100) if state.sharp_on else 0}%  "
                 f"HUD {'ON' if state.hud else 'OFF'}  son "
-                f"{'OFF' if not display.audio or display.audio.muted else 'ON'}  (F1 = masquer)",
+                f"{'OFF' if not display.audio or display.audio.muted else 'ON'}  (F1 = masquer, D = detail)",
+                detail,
             ))
             if src.error:
                 print("\n" + src.error)
