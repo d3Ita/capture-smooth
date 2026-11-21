@@ -94,6 +94,9 @@ def detail_lines(stages, lat, elapsed):
     line2 = "ms : " + "  ".join(f"{label} {avg(name):.1f}" for name, label in GPU_PARTS if avg(name) is not None)
     busy = sum(stages[name][0] for name, _ in GPU_PARTS if name in stages)
     line3 = f"carte graphique occupee {busy / max(elapsed * 1000, 1) * 100:.0f}% du temps (conseille : moins de 70%)"
+    late = avg("horaire")
+    if late is not None:
+        line3 += f"  |  images en retard sur leur horaire de {late:.2f} ms en moyenne"
     return [line1, line2, line3]
 
 
@@ -761,7 +764,7 @@ class Display:
 
     # Virtual-key codes read in Remote Play mode (the keyboard focus stays with Remote Play).
     GLOBAL_KEYS = {0x1B: "quit", 0x70: "counter", 0x49: "counter", 0x4D: "mute", 0x20: "ai", 0x53: "sharp",
-                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x44: "detail", 0x4E: "clean", 0x55: "upscale", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
+                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x44: "detail", 0x4E: "clean", 0x55: "upscale", 0x71: "audio-", 0x72: "audio+", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
 
     def poll_global_keys(self):
         import ctypes
@@ -781,7 +784,7 @@ class Display:
             return
         names = {glfw.KEY_ESCAPE: "quit", glfw.KEY_F1: "counter", glfw.KEY_I: "counter", glfw.KEY_M: "mute",
                  glfw.KEY_SEMICOLON: "mute", glfw.KEY_SPACE: "ai", glfw.KEY_S: "sharp", glfw.KEY_H: "hud",
-                 glfw.KEY_F: "scaling", glfw.KEY_C: "color", glfw.KEY_D: "detail", glfw.KEY_N: "clean", glfw.KEY_U: "upscale",
+                 glfw.KEY_F: "scaling", glfw.KEY_C: "color", glfw.KEY_D: "detail", glfw.KEY_N: "clean", glfw.KEY_U: "upscale", glfw.KEY_F2: "audio-", glfw.KEY_F3: "audio+",
                  glfw.KEY_2: 2, glfw.KEY_3: 3, glfw.KEY_4: 4, glfw.KEY_KP_2: 2, glfw.KEY_KP_3: 3, glfw.KEY_KP_4: 4}
         if key in names:  # M sits on ";" with an AZERTY keyboard
             self.act(names[key])
@@ -795,6 +798,10 @@ class Display:
             self.state.clean = not self.state.clean
             print(f"\nNettoyage de l'image {'ACTIVÉ' if self.state.clean else 'DÉSACTIVÉ'}"
                   + ("" if self.state.clean_ready else " (indisponible : module NVIDIA ou carte RTX requis)"))
+        elif key in ("audio-", "audio+"):
+            if self.audio:
+                self.audio.sync.nudge(-5 if key == "audio-" else 5)
+                print(f"\nSon : correction {self.audio.sync.manual:+.0f} ms, retardé de {self.audio.delay_ms:.0f} ms")
         elif key == "upscale":
             self.state.ai_upscale = not self.state.ai_upscale
             print(f"\nAgrandissement {'IA (NVIDIA)' if self.state.ai_upscale else 'classique'}")
@@ -930,6 +937,7 @@ class Display:
                 self.stats.out += 1
                 if t_in is not None:
                     self.stats.lat.append((shown - t_in) * 1000)
+            self.stats.stage("horaire", (start - target) * 1000)  # how late each frame starts compared with its slot
             if t_in is not None and t_pick is not None:  # the added delay of this real frame, in four parts
                 for name, a, b in (("attente", t_in, t_pick), ("calcul", t_pick, t_ready),
                                    ("file", t_ready, start), ("affichage", start, shown)):
@@ -1081,7 +1089,10 @@ def main():
     ap.add_argument("--seconds", type=float, default=0, help="quitte tout seul après N secondes (pour tester)")
     ap.add_argument("--snapshot", default="", help=argparse.SUPPRESS)  # save one displayed frame after 5 s
     ap.add_argument("--no-audio", action="store_true", help="ne pas jouer le son du boîtier")
-    ap.add_argument("--audio-delay", type=float, default=0, help="retarde le son de N ms si il arrive avant l'image")
+    ap.add_argument("--audio-delay", type=float, default=0,
+                    help="correction du son en ms, en plus du calage automatique (positif = son plus tard ; F2/F3)")
+    ap.add_argument("--son-auto", choices=["oui", "non"], default="oui",
+                    help="cale le son du boîtier sur le retard mesuré de l'image (non = seulement --audio-delay)")
     ap.add_argument("--hide-counter", action="store_true", help="démarre avec le compteur masqué (F1 l'affiche)")
     ap.add_argument("--no-interop", action="store_true", help=argparse.SUPPRESS)  # frames through PC memory (debug)
     ap.add_argument("--nettete", type=int, default=30, help="netteté de 0 à 100 (défaut 30, touche S)")
@@ -1145,6 +1156,8 @@ def main():
         print("  Attention : Remote Play ajoute son propre retard (compression, réseau, décompression),")
         print("  en général 50 à 100 ms de plus qu'avec un boîtier, et l'image est compressée.")
         print("  Garde la fenêtre Remote Play ouverte (pas réduite) : Capture Smooth s'affiche par-dessus.")
+        print("  Son : joué par Remote Play, sans le retard que Capture Smooth ajoute à l'image (20 à 40 ms) ;")
+        print("  il peut donc arriver un peu avant l'image.")
     else:
         idx, name = pick_device(args.device)
         src = None
@@ -1258,11 +1271,13 @@ def main():
     audio = None
     if not args.test and not args.no_audio and args.source == "capture":  # Remote Play plays its own sound
         try:
-            from audio import AudioPassthrough
+            from audio import AudioPassthrough, AudioSync
             audio = AudioPassthrough(wanted=name, delay_ms=args.audio_delay)
             audio.start()
-            lat = sum(audio.stream.latency) * 1000
-            print(f"Son : {audio.in_name} -> {audio.out_name} ({audio.api}, ~{lat:.0f} ms)")
+            audio.sync = AudioSync(audio, display.refresh, args.audio_delay, args.son_auto == "oui")
+            print(f"Son : {audio.in_name} -> {audio.out_name} ({audio.api}, ~{audio.path_ms():.0f} ms), "
+                  f"{'calé automatiquement sur l’image' if args.son_auto == 'oui' else 'délai fixe'} "
+                  f"(correction {args.audio_delay:+.0f} ms, F2/F3)")
         except Exception as e:
             print(f"Son : désactivé ({e})")
     display.audio = audio
@@ -1276,6 +1291,15 @@ def main():
             time.sleep(1)
             inp, dups, out, dropped, ai, lat, cuts, stages, elapsed = stats.snapshot()
             detail = detail_lines(stages, lat, elapsed)
+            if audio is not None and audio.sync.update(lat):
+                print(f"\nSon retardé de {audio.delay_ms:.0f} ms (image +{lat:.0f} ms, circuit du son "
+                      f"{audio.path_ms():.0f} ms, correction {audio.sync.manual:+.0f} ms)")
+            if audio is not None:
+                lead = audio.sync.lead_ms()
+                gap = "" if lead is None else (f", sans retard il arriverait {lead:.0f} ms avant l'image" if lead >= 0
+                                               else f", il arrive deja {-lead:.0f} ms apres l'image")
+                detail.append(f"son retarde de {audio.delay_ms:.0f} ms (correction {audio.sync.manual:+.0f} ms, "
+                              f"F2/F3){gap}")
             line = (f"\rentrée {inp:3d} img/s (doublons {dups:3d}) | sortie {out:3d} img/s | "
                     f"IA {ai:4.1f} ms | retard ajouté ~{lat:4.1f} ms | sautées {dropped:3d}" +
                     (f" | changement de plan" if cuts else "") + "   ")

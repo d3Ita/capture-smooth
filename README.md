@@ -67,7 +67,7 @@ Then press **Lancer**. Your choice is remembered. Options passed on the command 
 | 1080p | 30 fps | 90 fps | 60 fps |
 | 1080p | 60 fps | 120 fps | 120 fps |
 
-**Keys:** Esc quit · Space interpolation on/off · 2 / 3 / 4 multiplier · S sharpening · H HUD protection · F1 or I counter · M sound · F sharp/bilinear scaling · C BT.709/BT.601 colours · D time of each stage · U AI upscaling · N compression clean-up
+**Keys:** Esc quit · Space interpolation on/off · 2 / 3 / 4 multiplier · S sharpening · H HUD protection · F1 or I counter · M sound · F sharp/bilinear scaling · C BT.709/BT.601 colours · D time of each stage · U AI upscaling · N compression clean-up · F2 / F3 sound earlier / later
 
 ## Without a capture card: PS Remote Play
 
@@ -93,8 +93,10 @@ It is **not shipped with Capture Smooth**: it is NVIDIA's software under NVIDIA'
 2. **The capture card cannot upscale.** If you ask for 1440p while the console sends 1080p, you get a black screen or the card's "invalid resolution" picture. Pick the resolution the console really outputs. A 4K output works with the "1440p or 4K" choice, because the card downscales it.
 3. **The console only offers resolutions supported by the screen on the card's HDMI passthrough.** If 1440p is refused, set the card's **EDID** to *internal* in its software, or plug a 1440p/4K screen into the passthrough.
 4. **HDR off** on the console.
-5. **G-Sync / FreeSync**: enable it for windowed mode too (NVIDIA Control Panel → Set up G-SYNC → windowed and full screen mode).
-6. If the sound comes before the picture, start the exe with `--audio-delay 30` (in ms).
+5. **G-Sync / FreeSync**: enable it for windowed mode too (NVIDIA Control Panel → Set up G-SYNC → windowed and full screen mode). Capture Smooth paces its frames itself, without V-Sync, so a VRR screen follows them.
+6. **Sound (capture card)**: it is delayed automatically to match the picture's measured delay. **F2 / F3** move it 5 ms earlier or later (`--audio-delay` sets that correction at start, `--son-auto non` turns the automatic part off). On a PC whose sound path is slower than the picture (typically 50+ ms through WASAPI shared mode), the sound already comes a little after the picture and is not delayed further. The D key shows which case you are in.
+7. **Sound (PS Remote Play)**: played by the Remote Play app itself, so it does not get the 20–40 ms Capture Smooth adds to the picture and can come slightly early. Capturing Remote Play's sound to delay it (Windows 11 per-process audio capture) is not done yet.
+8. **Optional, not measured yet:** NVIDIA Control Panel → Manage 3D settings → *Vulkan/OpenGL present method* → *Prefer layered on DXGI Swapchain* (drivers 526.47+). It can lower display latency of OpenGL windows like Capture Smooth's and allow VRR in a window, but some users report uneven pacing with it. Capture Smooth's own counters cannot see the gain (it happens in Windows' compositor), so it is neither recommended nor discouraged until it is measured with an external tool.
 
 ## Options
 
@@ -123,7 +125,8 @@ It is **not shipped with Capture Smooth**: it is NVIDIA's software under NVIDIA'
 --nettoyage auto|oui|non  compression clean-up of real frames (NVIDIA module, RTX); off unless oui (N toggles it in Remote Play)
 --doublons auto|strict|tolerant   repeated-frame test: strict for a capture card, tolerant (helped by the
                          frame cadence) for a compressed picture such as Remote Play; auto = by source
---audio-delay MS, --no-audio
+--audio-delay MS        sound correction on top of the automatic sync (F2 / F3), --son-auto non for a fixed delay
+--no-audio
 --test                   animated test picture instead of the capture card
 --show-taskbar           shows the taskbar again if the app was killed
 ```
@@ -158,7 +161,7 @@ Génération d'images gratuite et open source pour un **boîtier de capture** : 
 
 Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. Une fenêtre de réglages s'ouvre : choisis la sortie vidéo de la console, les fps du jeu, la fluidité ou la latence, puis clique sur **Lancer**. Tes choix sont mémorisés.
 
-**Touches :** Échap quitter · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son · F mise à l'échelle fine/bilinéaire · C couleurs BT.709/BT.601 · D temps de chaque étape · U agrandissement IA · N nettoyage de la compression
+**Touches :** Échap quitter · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son · F mise à l'échelle fine/bilinéaire · C couleurs BT.709/BT.601 · D temps de chaque étape · U agrandissement IA · N nettoyage de la compression · F2 / F3 son plus tôt / plus tard
 
 **Sans boîtier de capture :** choisis **PS Remote Play (sans boîtier)** dans la fenêtre de réglages. Attention : **plus de latence** (50 à 100 ms de plus qu'avec un boîtier, à cause de la compression et du réseau) et image compressée, en 1080p au maximum. Lance PS Remote Play et affiche ton jeu avant, et garde sa fenêtre ouverte (pas réduite). La manette reste active dans Remote Play, et le son vient de Remote Play. Comme l'image est compressée, les images répétées par la console ne reviennent pas tout à fait identiques : Capture Smooth les repère en s'aidant de la cadence du jeu (option `--doublons`). Avec le module NVIDIA (cartes RTX) et un écran plus grand que 1080p, chaque vraie image est **agrandie par IA** à la taille de ton écran, plus nette qu'avec l'agrandissement habituel (touche U) : laisse pour cela la fenêtre Remote Play en **1920x1080** (pas en plein écran).
 
@@ -169,6 +172,9 @@ Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. Une fen
 - **Si la console refuse le 1440p** (« ton écran ne le prend pas en charge ») : dans le logiciel du boîtier, mets l'**EDID** sur *interne*, puis débranche et rebranche la console.
 - **HDR désactivé** sur la console.
 - **G-Sync** : active-le aussi pour le mode fenêtré.
+- **Son du boîtier** : calé automatiquement sur le retard mesuré de l'image ; **F2 / F3** le décalent de 5 ms. Si le son de ton PC est déjà plus lent que l'image (souvent plus de 50 ms en WASAPI partagé), il arrive un peu après l'image et n'est pas retardé davantage (la touche D l'indique).
+- **Son en Remote Play** : joué par l'appli Remote Play, il n'a pas les 20 à 40 ms ajoutés à l'image et peut arriver un peu en avance (pas encore corrigé).
+- **Réglage NVIDIA facultatif, pas encore mesuré** : Panneau de configuration NVIDIA → Gérer les paramètres 3D → *Méthode de présentation Vulkan/OpenGL* → *Préférer superposé sur la chaîne d'échange DXGI* (pilotes 526.47 et suivants). Il peut réduire la latence d'affichage et autoriser le VRR en fenêtre, mais certains signalent une cadence irrégulière : ni conseillé ni déconseillé tant qu'il n'est pas mesuré avec un outil externe.
 - **NVIDIA Frame Generation** (cartes RTX, version NVIDIA) : dans la fenêtre de réglages, le bouton **Télécharger…** propose la génération d'images de NVIDIA, plus fidèle que RIFE et environ 3 ms plus rapide par image. Ce module appartient à NVIDIA et n'est pas fourni avec Capture Smooth : il est téléchargé depuis le site de NVIDIA (416 Mo) après acceptation de la licence NVIDIA, et rangé dans `%LOCALAPPDATA%\CaptureSmooth\nvidia-vfx` (supprime ce dossier pour l'enlever).
 - **Capture brute** (version NVIDIA) : le boîtier est lu sans conversion par le processeur, et les couleurs sont converties sur la carte graphique (environ un cœur de processeur libéré). Si ça ne marche pas avec ton boîtier, l'app revient toute seule à l'ancienne méthode ; tu peux aussi la forcer avec `--capture opencv`.
 - **Barre des tâches :** l'appli la cache pendant qu'elle tourne. Si elle reste cachée après un plantage, lance `Reafficher la barre des taches.cmd`.

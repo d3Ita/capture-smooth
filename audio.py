@@ -17,6 +17,47 @@ def _find(hostapi_name, wanted):
     return inp, out, devs[inp]["name"], devs[out]["name"], int(devs[inp]["default_samplerate"])
 
 
+class AudioSync:
+    """Keeps the card's sound in step with the picture. Sound and picture leave the card together; the picture then
+    takes Capture Smooth's added delay (measured every second) plus, on average, half a screen refresh before it
+    shows, while the sound takes its own input/output buffering. The sound is delayed by the difference, plus a
+    manual offset (F2 / F3, --audio-delay). Changed only when it moves by STEP ms or more: each change is a tiny
+    jump in the sound."""
+    STEP = 8.0
+
+    def __init__(self, audio, refresh_hz, manual_ms=0.0, auto=True):
+        self.audio, self.auto, self.manual = audio, auto, float(manual_ms)
+        self.screen_ms = 500.0 / max(refresh_hz, 1)
+        self.video_ms = None  # smoothed added delay of the picture
+
+    def target(self):
+        base = 0.0
+        if self.auto and self.video_ms is not None:
+            base = max(0.0, self.video_ms + self.screen_ms - self.audio.path_ms())
+        return max(0.0, base + self.manual)
+
+    def lead_ms(self):
+        """How much earlier the sound would come than the picture without any delay (negative: it already comes
+        later, as the sound path is longer; delaying the sound cannot help then)."""
+        if self.video_ms is None:
+            return None
+        return self.video_ms + self.screen_ms - self.audio.path_ms()
+
+    def update(self, video_ms):
+        """Called once a second with the measured added delay (0 when no real frame was shown). True if changed."""
+        if video_ms > 0:
+            self.video_ms = video_ms if self.video_ms is None else 0.7 * self.video_ms + 0.3 * video_ms
+        t = self.target()
+        if abs(t - self.audio.delay_ms) >= self.STEP:
+            self.audio.set_delay(t)
+            return True
+        return False
+
+    def nudge(self, ms):
+        self.manual += ms
+        self.audio.set_delay(self.target())
+
+
 class AudioPassthrough:
     def __init__(self, wanted="HD60", delay_ms=0.0):  # wanted: the video device name, or part of it
         self.muted = False
@@ -63,6 +104,10 @@ class AudioPassthrough:
             outdata.fill(0)
         else:
             outdata[:] = out * self.volume
+
+    def path_ms(self):
+        """The sound's own delay through this PC: input plus output buffering."""
+        return sum(self.stream.latency) * 1000
 
     def start(self):
         self.stream.start()
