@@ -75,7 +75,7 @@ class Stats:
 # Stage names shown in the detail (D key). Wall clock, per real frame, adding up to the added delay:
 DELAY_PARTS = (("attente", "attente"), ("calcul", "calcul"), ("file", "file"), ("affichage", "affichage"))
 # Graphics card time (CUDA events, OpenGL timer; wall clock with DirectML), per real frame or per image:
-GPU_PARTS = (("envoi", "envoi"), ("conversion", "conv"), ("doublons", "doublons"), ("analyse", "analyse"),
+GPU_PARTS = (("envoi", "envoi"), ("conversion", "conv"), ("doublons", "doublons"), ("analyse", "analyse"), ("amelioration", "VSR"),
              ("interpolation", "IA/img"), ("finition", "finition"), ("echelle", "echelle/img"))
 PER_IMAGE = ("interpolation", "echelle")
 
@@ -107,7 +107,14 @@ class State:
         self.sharp_on = sharpness > 0   # S key
         self.hud = hud                  # H key
         self.cuts = cuts
+        self.clean = False              # N key: compression clean-up (PS Remote Play, NVIDIA module)
+        self.clean_ready = False        # the engine could load it
+        self.ai_upscale = True          # U key: AI upscaling of a small source (when the engine has it)
 
+
+# NVIDIA Video Super Resolution mode for the compression clean-up (PS Remote Play), chosen on GTA 6 footage
+# compressed like Remote Play against the lossless originals (PR for milestone 5).
+CLEAN_MODE = "DENOISE_MEDIUM"
 
 # Copy or new frame, game frame period and scene cuts: see cadence.py.
 from cadence import Cadence, SceneCuts  # noqa: E402
@@ -427,7 +434,9 @@ class Worker(threading.Thread):
         try:
             self.engine.thread_init()
             self.loop()
-        except Exception as e:  # surface GPU errors to the main thread
+        except Exception as e:  # surface GPU errors to the main thread; the details go to the log
+            import traceback
+            traceback.print_exc()
             self.error = repr(e)
             self.state.running = False
 
@@ -437,7 +446,8 @@ class Worker(threading.Thread):
         prev = None
         cadence = Cadence(self.tolerant, 1.0 / max(self.src.fps or 60, 1))
         cuts = SceneCuts()
-        ai_s = real_s = 0.0  # running averages: one in-between, one real frame (seconds)
+        ai_s = real_s = clean_s = 0.0  # running averages: one in-between, one real frame, one clean-up (seconds)
+        prev_img = None  # last real frame as shown (cleaned when the clean-up is on); prev = as captured
         k_auto = None
         pending = collections.deque()  # stage timers whose GPU work may still be running
 
@@ -488,15 +498,29 @@ class Worker(threading.Thread):
                         self.stats.cuts += 1
             probe.mark("analyse")
 
+            # NVIDIA Video Super Resolution on real frames only (30 a second): AI upscaling of a small source
+            # (PS Remote Play), or compression clean-up. Copy and cut tests keep comparing the frames as uploaded
+            # (prev), so their thresholds stay valid; the improved ones are shown and interpolated.
+            img = cur
+            if getattr(eng, "vsr_up", None) is not None and self.state.ai_upscale \
+                    or getattr(eng, "vsr", None) is not None and self.state.clean:
+                t0 = now()
+                probe.mark()
+                img = eng.improve(cur, self.state.clean, self.state.ai_upscale)
+                probe.mark("amelioration")
+                clean_s = 0.8 * clean_s + 0.2 * (now() - t0)
+            else:
+                clean_s = 0.0
+
             k = self.state.mult if self.state.on else 1
             if prev is None or k == 1 or cut:
                 t0 = now()
                 probe.mark()
-                real = eng.real(cur)
+                real = eng.real(img)
                 probe.mark("finition")
                 self.display.push(real, now(), t_in, t_pick)
                 real_s = 0.8 * real_s + 0.2 * (now() - t0)
-                prev = cur
+                prev, prev_img = cur, img
                 continue
 
             # Automatic multiplier: if this card cannot make k-1 in-betweens plus the real frame within one
@@ -505,8 +529,8 @@ class Worker(threading.Thread):
             if k_auto is None or k_auto > k:
                 k_auto = k
             if k > 2 and ai_s > 0:
-                fit_down = int((period * 0.92 - real_s) / ai_s) + 1
-                fit_up = int((period * 0.78 - real_s) / ai_s) + 1
+                fit_down = int((period * 0.92 - real_s - clean_s) / ai_s) + 1
+                fit_up = int((period * 0.78 - real_s - clean_s) / ai_s) + 1
                 if fit_down < k_auto:
                     k_auto = max(2, fit_down)
                 elif fit_up > k_auto:
@@ -518,7 +542,7 @@ class Worker(threading.Thread):
 
             # In-betweens first: the real frame is only shown after them, so it can wait.
             probe.mark()
-            eng.set_pair(prev, cur)
+            eng.set_pair(prev_img, img)
             probe.mark("analyse")
             base = None
             next_expected = t_in + period
@@ -527,10 +551,10 @@ class Worker(threading.Thread):
                     break  # the next game frame is due: drop the remaining in-betweens to keep latency down
                 t0 = now()
                 probe.mark()
-                img = eng.interp(i / k)
+                mid = eng.interp(i / k)
                 probe.mark("interpolation")
-                if hasattr(img, "event"):  # GPU frame: wait until it is really computed, for honest pacing
-                    img.event.synchronize()
+                if hasattr(mid, "event"):  # GPU frame: wait until it is really computed, for honest pacing
+                    mid.event.synchronize()
                 done = now()
                 ai_s = (done - t0) if ai_s == 0 else 0.8 * ai_s + 0.2 * (done - t0)
                 with self.stats.lock:
@@ -538,16 +562,16 @@ class Worker(threading.Thread):
                     self.stats.ai_n += 1
                 if base is None:
                     base = done
-                self.display.push(img, base + (i - 1) * period / k, None)
+                self.display.push(mid, base + (i - 1) * period / k, None)
             t0 = now()
             probe.mark()
-            real = eng.real(cur)
+            real = eng.real(img)
             probe.mark("finition")
             if hasattr(real, "event"):
                 real.event.synchronize()
             real_s = 0.8 * real_s + 0.2 * (now() - t0)
             self.display.push(real, max(now(), base + (k - 1) * period / k), t_in, t_pick)
-            prev = cur
+            prev, prev_img = cur, img
 
 
 # ---------------------------------------------------------------- display
@@ -737,7 +761,7 @@ class Display:
 
     # Virtual-key codes read in Remote Play mode (the keyboard focus stays with Remote Play).
     GLOBAL_KEYS = {0x1B: "quit", 0x70: "counter", 0x49: "counter", 0x4D: "mute", 0x20: "ai", 0x53: "sharp",
-                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x44: "detail", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
+                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x44: "detail", 0x4E: "clean", 0x55: "upscale", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
 
     def poll_global_keys(self):
         import ctypes
@@ -757,7 +781,7 @@ class Display:
             return
         names = {glfw.KEY_ESCAPE: "quit", glfw.KEY_F1: "counter", glfw.KEY_I: "counter", glfw.KEY_M: "mute",
                  glfw.KEY_SEMICOLON: "mute", glfw.KEY_SPACE: "ai", glfw.KEY_S: "sharp", glfw.KEY_H: "hud",
-                 glfw.KEY_F: "scaling", glfw.KEY_C: "color", glfw.KEY_D: "detail",
+                 glfw.KEY_F: "scaling", glfw.KEY_C: "color", glfw.KEY_D: "detail", glfw.KEY_N: "clean", glfw.KEY_U: "upscale",
                  glfw.KEY_2: 2, glfw.KEY_3: 3, glfw.KEY_4: 4, glfw.KEY_KP_2: 2, glfw.KEY_KP_3: 3, glfw.KEY_KP_4: 4}
         if key in names:  # M sits on ";" with an AZERTY keyboard
             self.act(names[key])
@@ -767,6 +791,13 @@ class Display:
             glfw.set_window_should_close(self.win, True)
         elif key == "counter":
             self.overlay_on = not self.overlay_on
+        elif key == "clean":
+            self.state.clean = not self.state.clean
+            print(f"\nNettoyage de l'image {'ACTIVÉ' if self.state.clean else 'DÉSACTIVÉ'}"
+                  + ("" if self.state.clean_ready else " (indisponible : module NVIDIA ou carte RTX requis)"))
+        elif key == "upscale":
+            self.state.ai_upscale = not self.state.ai_upscale
+            print(f"\nAgrandissement {'IA (NVIDIA)' if self.state.ai_upscale else 'classique'}")
         elif key == "detail":
             self.detail = not self.detail
             self.overlay_on = self.overlay_on or self.detail
@@ -1026,6 +1057,13 @@ def main():
                     help="vfg = NVIDIA Frame Generation (RTX, à télécharger dans la fenêtre de réglages), "
                          "cuda = RIFE sur carte NVIDIA, directml = toute carte DirectX 12, rife = cuda ou directml ; "
                          "auto = le meilleur possible")
+    ap.add_argument("--nettoyage", choices=["auto", "oui", "non"], default="auto",
+                    help="nettoyage de la compression sur les vraies images (module NVIDIA, carte RTX) : "
+                         "auto = désactivé, la touche N l'active en PS Remote Play")
+    ap.add_argument("--agrandissement", choices=["auto", "shader"], default="auto",
+                    help="PS Remote Play sur un écran plus grand que 1080p : auto = agrandissement IA des vraies "
+                         "images (module NVIDIA, touche U) ; shader = agrandissement classique")
+    ap.add_argument("--nettoyage-mode", default=CLEAN_MODE, help=argparse.SUPPRESS)  # NVIDIA VSR mode, for tests
     ap.add_argument("--vfg-qualite", choices=["basse", "moyenne", "haute"], default="moyenne",
                     help="qualité de NVIDIA Frame Generation (haute : plus fidèle mais ~15 ms par image, x2 seulement)")
     ap.add_argument("--list", action="store_true", help="affiche les appareils vidéo et quitte")
@@ -1138,6 +1176,20 @@ def main():
 
     sw, sh = src.size
     work = (sw, sh) if sh <= 1440 else (round(sw * 1440 / sh), 1440)
+    # PS Remote Play sends at most 1080p. On a bigger screen, with the NVIDIA module, work at the screen's size
+    # (up to 1440p): each real frame is enlarged by AI (Video Super Resolution) instead of by the final shader.
+    # Measured on GTA 6 compressed like Remote Play, against the lossless 1440p frames: as close or closer than
+    # bicubic (40.73 against 40.42 dB at 5 Mbit/s, equal at 12 Mbit/s), with far more of the detail kept
+    # (0.87-0.89 of the original's against 0.69-0.75), for 2.5 ms per real frame.
+    ai_upscale = False
+    if isinstance(src, WindowSource) and args.agrandissement != "shader" and args.moteur not in ("directml",):
+        from engines import vfg_available
+        import ctypes
+        screen_h = ctypes.windll.user32.GetSystemMetrics(1)
+        if vfg_available() and screen_h > sh:
+            work = (2560, 1440) if screen_h >= 1440 else (round(sw * screen_h / sh) // 8 * 8, screen_h)
+            ai_upscale = True
+            print(f"  Agrandissement IA des vraies images : {sw}x{sh} -> {work[0]}x{work[1]} (touche U)")
     scale = 0.5 if (args.quality == "rapide" and work[1] >= 1440) else 1.0
 
     print(f"{APP} {VERSION} — préparation de l'IA…")
@@ -1180,6 +1232,25 @@ def main():
         else:  # converted by OpenCV on the CPU (BT.601): the display fixes the colours, as with the old source
             display.fix_709 = src.bt709
             print("  (moteur DirectML : couleurs converties par le processeur)")
+    if ai_upscale:
+        try:
+            engine.enable_upscale()
+        except Exception as e:  # not an RTX card...: the frames are enlarged the classic way
+            print(f"(agrandissement IA indisponible : {e})")
+            state.ai_upscale = False
+    # Compression clean-up: off by default. On GTA 6 compressed like Remote Play it did not bring the picture
+    # closer to the original (44.7 against 46.0 dB at 12 Mbit/s, +0.15 dB at best at 5 Mbit/s) and removed
+    # detail; it stays available (N key, --nettoyage oui) for streams worse than that. Loaded for PS Remote
+    # Play when the NVIDIA module is there, so N can switch it on.
+    if args.nettoyage != "non" and hasattr(engine, "enable_cleaning"):
+        from engines import vfg_available
+        if args.nettoyage == "oui" or (isinstance(src, WindowSource) and vfg_available()):
+            try:
+                engine.enable_cleaning(args.nettoyage_mode)
+                state.clean_ready = True
+                state.clean = args.nettoyage == "oui"
+            except Exception as e:
+                print(f"(nettoyage de l'image indisponible : {e})")
     tolerant = args.doublons == "tolerant" or (args.doublons == "auto" and isinstance(src, WindowSource))
     worker = Worker(src, display, state, stats, engine, tolerant)
     detail = f"qualité {engine.quality}" if hasattr(engine, "quality") else f"IA échelle {scale}"
@@ -1225,7 +1296,8 @@ def main():
                 out,
                 f"{moving}  {mode}  IA {ai:.0f} ms  retard +{lat:.0f} ms",
                 f"{work[0]}x{work[1]}  net {int(state.sharpness * 100) if state.sharp_on else 0}%  "
-                f"HUD {'ON' if state.hud else 'OFF'}  son "
+                f"HUD {'ON' if state.hud else 'OFF'}  " + (f"nettoyage {'ON' if state.clean else 'OFF'}  "
+                                                            if state.clean_ready else "") + "son "
                 f"{'OFF' if not display.audio or display.audio.muted else 'ON'}  (F1 = masquer, D = detail)",
                 detail,
             ))

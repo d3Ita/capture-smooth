@@ -67,7 +67,7 @@ Then press **Lancer**. Your choice is remembered. Options passed on the command 
 | 1080p | 30 fps | 90 fps | 60 fps |
 | 1080p | 60 fps | 120 fps | 120 fps |
 
-**Keys:** Esc quit · Space interpolation on/off · 2 / 3 / 4 multiplier · S sharpening · H HUD protection · F1 or I counter · M sound · F sharp/bilinear scaling · C BT.709/BT.601 colours · D time of each stage
+**Keys:** Esc quit · Space interpolation on/off · 2 / 3 / 4 multiplier · S sharpening · H HUD protection · F1 or I counter · M sound · F sharp/bilinear scaling · C BT.709/BT.601 colours · D time of each stage · U AI upscaling · N compression clean-up
 
 ## Without a capture card: PS Remote Play
 
@@ -76,6 +76,8 @@ Capture Smooth can also take the picture from the official **PS Remote Play** ap
 - **More latency.** Remote Play compresses the picture on the PS5, sends it over the network and decompresses it on the PC: usually **50 to 100 ms more** than a capture card, on top of Capture Smooth's own delay.
 - **Lower picture quality**: the stream is compressed and at most 1080p, and compression blocks can show more in AI frames.
 - Start PS Remote Play and show your game first, and keep its window open (not minimized). Capture Smooth shows on top of it without taking the focus, so the controller keeps working in Remote Play. The sound comes from Remote Play.
+
+- With the optional NVIDIA module (RTX cards, see below) and a screen above 1080p, each real frame is **enlarged by AI** (NVIDIA Video Super Resolution) to your screen's size, sharper than the usual scaling. For that, keep the Remote Play window at **1920x1080** (not full screen), so Capture Smooth gets the stream at its own size.
 
 A capture card stays the recommended way.
 
@@ -117,6 +119,8 @@ It is **not shipped with Capture Smooth**: it is NVIDIA's software under NVIDIA'
                          about one CPU core less (NVIDIA build; auto = brute when possible, else opencv)
 --plage auto|limitee|pleine   colour range for raw capture (auto = what the card reports, else limited)
 --mesures                time of each stage in the counter and the log (D toggles it)
+--agrandissement auto|shader   Remote Play on a screen above 1080p: auto = AI upscaling of real frames (NVIDIA module, RTX; U toggles it)
+--nettoyage auto|oui|non  compression clean-up of real frames (NVIDIA module, RTX); off unless oui (N toggles it in Remote Play)
 --doublons auto|strict|tolerant   repeated-frame test: strict for a capture card, tolerant (helped by the
                          frame cadence) for a compressed picture such as Remote Play; auto = by source
 --audio-delay MS, --no-audio
@@ -154,9 +158,9 @@ Génération d'images gratuite et open source pour un **boîtier de capture** : 
 
 Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. Une fenêtre de réglages s'ouvre : choisis la sortie vidéo de la console, les fps du jeu, la fluidité ou la latence, puis clique sur **Lancer**. Tes choix sont mémorisés.
 
-**Touches :** Échap quitter · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son · F mise à l'échelle fine/bilinéaire · C couleurs BT.709/BT.601 · D temps de chaque étape
+**Touches :** Échap quitter · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son · F mise à l'échelle fine/bilinéaire · C couleurs BT.709/BT.601 · D temps de chaque étape · U agrandissement IA · N nettoyage de la compression
 
-**Sans boîtier de capture :** choisis **PS Remote Play (sans boîtier)** dans la fenêtre de réglages. Attention : **plus de latence** (50 à 100 ms de plus qu'avec un boîtier, à cause de la compression et du réseau) et image compressée, en 1080p au maximum. Lance PS Remote Play et affiche ton jeu avant, et garde sa fenêtre ouverte (pas réduite). La manette reste active dans Remote Play, et le son vient de Remote Play. Comme l'image est compressée, les images répétées par la console ne reviennent pas tout à fait identiques : Capture Smooth les repère en s'aidant de la cadence du jeu (option `--doublons`).
+**Sans boîtier de capture :** choisis **PS Remote Play (sans boîtier)** dans la fenêtre de réglages. Attention : **plus de latence** (50 à 100 ms de plus qu'avec un boîtier, à cause de la compression et du réseau) et image compressée, en 1080p au maximum. Lance PS Remote Play et affiche ton jeu avant, et garde sa fenêtre ouverte (pas réduite). La manette reste active dans Remote Play, et le son vient de Remote Play. Comme l'image est compressée, les images répétées par la console ne reviennent pas tout à fait identiques : Capture Smooth les repère en s'aidant de la cadence du jeu (option `--doublons`). Avec le module NVIDIA (cartes RTX) et un écran plus grand que 1080p, chaque vraie image est **agrandie par IA** à la taille de ton écran, plus nette qu'avec l'agrandissement habituel (touche U) : laisse pour cela la fenêtre Remote Play en **1920x1080** (pas en plein écran).
 
 **À savoir :**
 

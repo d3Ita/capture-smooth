@@ -10,7 +10,7 @@ from pathlib import Path
 
 SETTINGS = Path(os.environ.get("APPDATA", Path.home())) / "CaptureSmooth" / "settings.json"
 DEFAULTS = {"source": "capture", "res": "1440p", "game": "30", "mult": "max", "audio": True, "counter": True,
-            "sharp": 30, "hud": True, "engine": "vfg"}
+            "sharp": 30, "hud": True, "engine": "vfg", "clean": False, "upscale": True}
 
 
 def nvidia_build():
@@ -148,6 +148,10 @@ def to_args(s, test=False):
         args.append("--no-hud")
     if s.get("engine") == "rife":
         args += ["--moteur", "rife"]
+    if s.get("clean", False):
+        args += ["--nettoyage", "oui"]
+    if not s.get("upscale", True):
+        args += ["--agrandissement", "shader"]
     if test:
         args += ["--test", "--windowed", "--test-game-fps", str(game)]
     return args
@@ -171,6 +175,8 @@ def choose(title="Capture Smooth"):
     frm = ttk.Frame(root, padding=12)
     frm.grid()
     engine = tk.StringVar(value=s.get("engine", "vfg"))
+    clean = tk.BooleanVar(value=s.get("clean", False))
+    upscale = tk.BooleanVar(value=s.get("upscale", True))
 
     ttk.Label(frm, text=title, font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", **pad)
     ttk.Label(frm, text="Images intermédiaires par IA pour ta console",
@@ -263,6 +269,13 @@ def choose(title="Capture Smooth"):
                                 variable=engine, value="vfg").grid(row=0, column=0, sticky="w")
                 ttk.Radiobutton(ebox, text="RIFE (intégré)", variable=engine, value="rife").grid(
                     row=1, column=0, sticky="w")
+                ttk.Label(ebox, text="PS Remote Play (cartes RTX) :", foreground="#444").grid(
+                    row=2, column=0, sticky="w", pady=(8, 0))
+                ttk.Checkbutton(ebox, text="Agrandissement IA vers ton écran (plus net, touche U)",
+                                variable=upscale).grid(row=3, column=0, sticky="w", padx=(12, 0))
+                ttk.Checkbutton(ebox, text="Nettoyage de la compression (touche N ; utile seulement si l'image "
+                                           "est très dégradée)", variable=clean).grid(
+                    row=4, column=0, sticky="w", padx=(12, 0))
             else:
                 ttk.Label(ebox, wraplength=440, justify="left", foreground="#444",
                           text="NVIDIA Frame Generation : la génération d'images de NVIDIA, plus fidèle et plus "
@@ -284,7 +297,8 @@ def choose(title="Capture Smooth"):
 
     def current():
         return {"source": source.get(), "res": res.get(), "game": game.get(), "mult": mult.get(), "audio": audio.get(),
-                "counter": counter.get(), "sharp": sharp.get(), "hud": hud.get(), "engine": engine.get()}
+                "counter": counter.get(), "sharp": sharp.get(), "hud": hud.get(), "engine": engine.get(),
+                "clean": clean.get(), "upscale": upscale.get()}
 
     def go(test=False):
         c = current()
