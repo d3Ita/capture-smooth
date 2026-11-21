@@ -7,7 +7,7 @@
 #ifndef Edition
   #define Edition "NVIDIA"
 #endif
-#define AppVer "1.4.0"
+#define AppVer "1.4.1"
 #define ExeName "CaptureSmooth-" + Edition + ".exe"
 
 [Setup]

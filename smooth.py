@@ -29,7 +29,7 @@ from OpenGL.GL import (
 )
 
 APP = "Capture Smooth"
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 RES = {"1080p": (1920, 1080), "1440p": (2560, 1440), "4k": (3840, 2160)}
 now = time.perf_counter
