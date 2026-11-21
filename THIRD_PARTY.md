@@ -19,4 +19,6 @@
 | [comtypes](https://github.com/enthought/comtypes) | capture device names | MIT |
 | [PyInstaller](https://pyinstaller.org) | .exe packaging | GPL-2.0 with bootloader exception |
 
+**Not shipped:** NVIDIA Video Effects SDK Python package [`nvidia-vfx`](https://pypi.org/project/nvidia-vfx/) (Video Frame Generation), NVIDIA proprietary licence ([NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/), [Product-Specific Terms for NVIDIA AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/)). The user may download it from pypi.nvidia.com after accepting that licence in the settings window (`vfg_download.py`); its licence files are kept next to it. Capture Smooth's MIT licence does not cover it.
+
 The full licence texts ship with each package (see the `_internal` folder of a release).

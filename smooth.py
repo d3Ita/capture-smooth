@@ -959,15 +959,32 @@ def single_instance():
     return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
 
 
-def make_engine(kind, src_size, work, scale):
-    """CUDA if this card supports it, otherwise DirectML. Each engine is warmed up here, so a card that
-    loads but cannot run the network still falls back instead of crashing later."""
+def make_engine(kind, src_size, work, scale, vfg_quality="moyenne"):
+    """NVIDIA Frame Generation if it was downloaded and this card runs it, else CUDA (RIFE) if this card supports
+    it, otherwise DirectML. Each engine is warmed up here, so a card that loads but cannot run the network still
+    falls back instead of crashing later."""
     reasons = []
+    try_vfg = kind in ("auto", "vfg")
+    if kind == "rife":  # the best engine except NVIDIA Frame Generation
+        kind = "auto"
     if kind == "auto":
         try:
             import torch  # noqa: F401  (absent from the DirectML build: go straight to DirectML, silently)
         except ImportError:
             kind = "directml"
+            try_vfg = False
+    if try_vfg:
+        try:
+            from engines import VfgEngine, vfg_available
+            if kind == "vfg" or vfg_available():  # auto: only when the user downloaded it, silently otherwise
+                eng = VfgEngine(src_size, work, vfg_quality)
+                eng.warmup()
+                return eng
+        except Exception as e:
+            reasons.append(f"NVIDIA Frame Generation : {e}")
+            if kind == "vfg":
+                raise RuntimeError(f"NVIDIA Frame Generation indisponible ({e})")
+            print(f"NVIDIA Frame Generation indisponible ({e}) : passage au moteur RIFE.")
     if kind in ("auto", "cuda"):
         try:
             from engines import CudaEngine
@@ -1005,8 +1022,12 @@ def main():
                     help="capture = boîtier de capture ; remoteplay = fenêtre PS Remote Play, sans boîtier (plus de latence)")
     ap.add_argument("--window", default="PS Remote Play", help="titre (ou partie du titre) de la fenêtre à capturer")
     ap.add_argument("--device", default="auto", help="nom (ou numéro) du boîtier de capture (défaut : auto)")
-    ap.add_argument("--moteur", choices=["auto", "cuda", "directml"], default="auto",
-                    help="cuda = NVIDIA (le plus rapide), directml = toute carte DirectX 12 ; auto = cuda si possible")
+    ap.add_argument("--moteur", choices=["auto", "vfg", "rife", "cuda", "directml"], default="auto",
+                    help="vfg = NVIDIA Frame Generation (RTX, à télécharger dans la fenêtre de réglages), "
+                         "cuda = RIFE sur carte NVIDIA, directml = toute carte DirectX 12, rife = cuda ou directml ; "
+                         "auto = le meilleur possible")
+    ap.add_argument("--vfg-qualite", choices=["basse", "moyenne", "haute"], default="moyenne",
+                    help="qualité de NVIDIA Frame Generation (haute : plus fidèle mais ~15 ms par image, x2 seulement)")
     ap.add_argument("--list", action="store_true", help="affiche les appareils vidéo et quitte")
     ap.add_argument("--show-taskbar", action="store_true",
                     help="réaffiche la barre des tâches (si l'appli a été fermée de force) et quitte")
@@ -1131,7 +1152,7 @@ def main():
 
     def build():
         try:
-            built["engine"] = make_engine(args.moteur, src.size, work, scale)
+            built["engine"] = make_engine(args.moteur, src.size, work, scale, args.vfg_qualite)
         except Exception as e:
             built["error"] = e
 
@@ -1146,14 +1167,14 @@ def main():
         show_taskbar()
         raise built["error"]
     engine = built["engine"]
-    if engine.name == "CUDA" and not args.no_interop:
+    if hasattr(engine, "use_gpu_frames") and not args.no_interop:  # PyTorch engines (RIFE, NVIDIA VFG)
         try:
             display.enable_interop()
             engine.use_gpu_frames()
         except Exception as e:  # other GPU drives the screen, old driver...: frames go through PC memory
             print(f"(affichage direct GPU indisponible, mode normal : {e})")
     if isinstance(src, RawCaptureSource):
-        if engine.name == "CUDA":
+        if hasattr(engine, "yuv_to_rgb"):
             display.color_toggle = src.toggle_matrix
             display.fix_709 = False  # --couleurs picked the matrix of the conversion itself
         else:  # converted by OpenCV on the CPU (BT.601): the display fixes the colours, as with the old source
@@ -1161,8 +1182,8 @@ def main():
             print("  (moteur DirectML : couleurs converties par le processeur)")
     tolerant = args.doublons == "tolerant" or (args.doublons == "auto" and isinstance(src, WindowSource))
     worker = Worker(src, display, state, stats, engine, tolerant)
-    print(f"Prêt. Moteur {engine.name}, image {work[0]}x{work[1]}, IA échelle {scale}, x{args.x}, "
-          f"écran {display.refresh} Hz.")
+    detail = f"qualité {engine.quality}" if hasattr(engine, "quality") else f"IA échelle {scale}"
+    print(f"Prêt. Moteur {engine.name}, image {work[0]}x{work[1]}, {detail}, x{args.x}, écran {display.refresh} Hz.")
     audio = None
     if not args.test and not args.no_audio and args.source == "capture":  # Remote Play plays its own sound
         try:
