@@ -131,6 +131,22 @@ class CudaProbe(WallProbe):
         return a.elapsed_time(b)
 
 
+class YuvFrame:
+    """A raw frame from the capture card (see RawCaptureSource): NV12 or YUY2 bytes, converted to RGB by the engine.
+    bt709: HD matrix (else BT.601); full_range: 0-255 (else 16-235 for luma, 16-240 for colour)."""
+    __slots__ = ("data", "fmt", "w", "h", "bt709", "full_range")
+
+    def __init__(self, data, fmt, w, h, bt709, full_range):
+        self.data, self.fmt, self.w, self.h, self.bt709, self.full_range = data, fmt, w, h, bt709, full_range
+
+    def bgr(self):
+        """CPU conversion (engines without the GPU one). OpenCV uses BT.601 limited range: the display's colour
+        fix (present.py) then turns it into BT.709."""
+        if self.fmt == "nv12":
+            return cv2.cvtColor(self.data.reshape(self.h * 3 // 2, self.w), cv2.COLOR_YUV2BGR_NV12)
+        return cv2.cvtColor(self.data.reshape(self.h, self.w, 2), cv2.COLOR_YUV2BGR_YUY2)
+
+
 class GpuFrame:
     """A displayed frame that stays on the graphics card (CUDA -> OpenGL interop), ready once event is done."""
     __slots__ = ("tensor", "event")
@@ -164,7 +180,8 @@ class CudaEngine:
         self.torch, self.F = torch, F
         self.W, self.H = work_size
         self.scale = scale
-        self.resize = src_size != work_size
+        self.pinned = {}  # frame shape -> staging buffers in page-locked memory (see to_gpu)
+        self.pin_i = 0
         self.net = load_model(app_dir() / "models" / "flownet_v4.6.pkl", half=self.dtype == torch.half)
         self.ph, self.pw = padded(self.H, self.W, scale, self.net.align)
         self.use_graphs = use_graphs
@@ -227,12 +244,60 @@ class CudaEngine:
     def probe(self):
         return CudaProbe(self.torch)
 
+    def to_gpu(self, arr):
+        """numpy bytes -> graphics card through pinned (page-locked) memory: one CPU copy, then a copy the card
+        does on its own. A few staging buffers are reused, each waited for before it is overwritten."""
+        torch = self.torch
+        ring = self.pinned.get(arr.shape)
+        if ring is None:
+            if len(self.pinned) > 4:  # window resized many times (Remote Play): forget the old sizes
+                torch.cuda.synchronize()
+                self.pinned.clear()
+            ring = self.pinned[arr.shape] = [[torch.empty(arr.shape, dtype=torch.uint8).pin_memory(), None]
+                                             for _ in range(3)]
+        slot = ring[self.pin_i % len(ring)]
+        self.pin_i += 1
+        if slot[1] is not None:
+            slot[1].synchronize()
+        slot[0].numpy()[...] = arr  # also gathers a cropped (non-contiguous) window region
+        x = slot[0].to("cuda", non_blocking=True)
+        slot[1] = torch.cuda.Event()
+        slot[1].record()
+        return x
+
+    def yuv_to_rgb(self, x, f):
+        """Raw NV12 / YUY2 bytes (on the GPU) -> RGB 0-1, with the frame's own matrix and range."""
+        F, w, h = self.F, f.w, f.h
+        if f.fmt == "nv12":  # full-size luma plane, then colour at half size both ways, U and V interleaved
+            y = x[:w * h].view(1, 1, h, w)
+            uv = x[w * h:].view(h // 2, w // 2, 2).permute(2, 0, 1)[None]
+        else:  # yuyv422: Y0 U Y1 V for each pair of pixels
+            p = x.view(h, w // 2, 4)
+            y = p[..., 0::2].reshape(1, 1, h, w)
+            uv = p[..., 1::2].permute(2, 0, 1)[None]
+        y = y.to(self.dtype)
+        uv = F.interpolate(uv.to(self.dtype), size=(h, w), mode="bilinear", align_corners=False)
+        if f.full_range:
+            y, uv = y / 255, (uv - 128) / 255
+        else:
+            y, uv = (y - 16) / 219, (uv - 128) / 224
+        kr, kb = (0.2126, 0.0722) if f.bt709 else (0.299, 0.114)
+        cb, cr = uv[:, 0:1], uv[:, 1:2]
+        r = y + 2 * (1 - kr) * cr
+        b = y + 2 * (1 - kb) * cb
+        g = (y - kr * r - kb * b) / (1 - kr - kb)
+        return self.torch.cat((r, g, b), 1).clamp_(0, 1)
+
     def upload(self, frame, probe=None):
-        x = self.torch.from_numpy(frame).cuda(non_blocking=True)
+        yuv = isinstance(frame, YuvFrame)
+        x = self.to_gpu(frame.data if yuv else frame)
         if probe:
             probe.mark("envoi")  # PC memory -> graphics card; what follows is conversion
-        x = x.permute(2, 0, 1)[None].flip(1).to(self.dtype).div_(255)  # BGR -> RGB
-        if self.resize:
+        if yuv:
+            x = self.yuv_to_rgb(x, frame)
+        else:  # BGR, or BGRA from a window capture
+            x = x[..., :3].permute(2, 0, 1)[None].flip(1).to(self.dtype).div_(255)  # -> RGB
+        if x.shape[-2:] != (self.H, self.W):
             x = self.F.interpolate(x, size=(self.H, self.W), mode="bilinear", antialias=True, align_corners=False)
         return self.F.pad(x, (0, self.pw - self.W, 0, self.ph - self.H), mode="replicate")
 
@@ -352,7 +417,6 @@ class DmlEngine:
         self.ort = ort
         self.W, self.H = work_size
         self.scale = scale
-        self.resize = src_size != work_size
         models = app_dir() / "models"
         path = models / onnx_name(self.W, self.H, scale)
         if not path.exists():
@@ -385,8 +449,13 @@ class DmlEngine:
         return WallProbe()
 
     def upload(self, frame, probe=None):  # the frame goes to the card inside the ONNX call, counted with it
-        if self.resize:
-            frame = cv2.resize(frame, (self.W, self.H), interpolation=cv2.INTER_AREA)
+        if isinstance(frame, YuvFrame):
+            frame = frame.bgr()
+        elif frame.shape[2] == 4:  # BGRA from a window capture
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        if frame.shape[:2] != (self.H, self.W):
+            interp = cv2.INTER_AREA if frame.shape[0] > self.H else cv2.INTER_LINEAR
+            frame = cv2.resize(frame, (self.W, self.H), interpolation=interp)
         return np.ascontiguousarray(frame)
 
     def is_dup(self, prev, cur):

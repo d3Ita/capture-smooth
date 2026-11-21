@@ -106,6 +106,9 @@ A capture card stays the recommended way.
 --no-cut                 interpolate across scene cuts too
 --bilineaire             old, softer scaling to the screen (F toggles it)
 --couleurs auto|709|601  capture colour matrix (C toggles it)
+--capture auto|brute|opencv   brute = the card read raw (NV12/YUY2) by FFmpeg, colours converted on the GPU:
+                         about one CPU core less (NVIDIA build; auto = brute when possible, else opencv)
+--plage auto|limitee|pleine   colour range for raw capture (auto = what the card reports, else limited)
 --mesures                time of each stage in the counter and the log (D toggles it)
 --audio-delay MS, --no-audio
 --test                   animated test picture instead of the capture card
@@ -117,7 +120,7 @@ A capture card stays the recommended way.
 Windows 10/11 and Python 3.11+.
 
 ```
-pip install numpy opencv-python-headless glfw PyOpenGL sounddevice comtypes
+pip install numpy opencv-python-headless glfw PyOpenGL sounddevice comtypes av windows-capture
 pip install torch --index-url https://download.pytorch.org/whl/cu128     # CUDA engine (RTX 20 to RTX 50)
 pip install onnxruntime-directml                                         # or the DirectML engine
 python smooth.py --res 1440p --x 3
@@ -152,6 +155,7 @@ Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. Une fen
 - **Si la console refuse le 1440p** (« ton écran ne le prend pas en charge ») : dans le logiciel du boîtier, mets l'**EDID** sur *interne*, puis débranche et rebranche la console.
 - **HDR désactivé** sur la console.
 - **G-Sync** : active-le aussi pour le mode fenêtré.
+- **Capture brute** (version NVIDIA) : le boîtier est lu sans conversion par le processeur, et les couleurs sont converties sur la carte graphique (environ un cœur de processeur libéré). Si ça ne marche pas avec ton boîtier, l'app revient toute seule à l'ancienne méthode ; tu peux aussi la forcer avec `--capture opencv`.
 - **Barre des tâches :** l'appli la cache pendant qu'elle tourne. Si elle reste cachée après un plantage, lance `Reafficher la barre des taches.cmd`.
 
 ## Credits and licences

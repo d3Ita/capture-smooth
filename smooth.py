@@ -247,6 +247,75 @@ class CaptureSource(Source):
         self.cap.release()
 
 
+class RawCaptureSource(Source):
+    """The card read raw (NV12, else YUY2) by FFmpeg through PyAV. OpenCV's DirectShow path always hands over
+    BGR: Windows or OpenCV convert on the CPU with the BT.601 matrix. Here the bytes go to the graphics card as
+    they are and the engine converts them with the right matrix and range (CudaEngine.yuv_to_rgb)."""
+    FORMATS = (("nv12", "NV12"), ("yuyv422", "YUY2"))
+
+    def __init__(self, name, w, h, fps, plage="auto"):
+        super().__init__()
+        import av
+        from engines import YuvFrame
+        self.YuvFrame = YuvFrame
+        errors = []
+        for fmt, label in self.FORMATS:
+            frame_bytes = w * h * 3 // 2 if fmt == "nv12" else w * h * 2
+            try:
+                # A real-time buffer of about 3 frames: if reading ever lags, old frames are dropped instead
+                # of piling up as delay.
+                cont = av.open(f"video={name}", format="dshow", options={
+                    "video_size": f"{w}x{h}", "framerate": str(fps), "pixel_format": fmt,
+                    "rtbufsize": str(frame_bytes * 3)})
+                stream = cont.streams.video[0]
+                packets = cont.demux(stream)
+                first = next(packets)
+            except Exception as e:
+                errors.append(f"{label} : {e}")
+                continue
+            cc = stream.codec_context
+            if first.size != frame_bytes or (cc.width, cc.height) != (w, h):
+                errors.append(f"{label} : {cc.width}x{cc.height}, {first.size} octets par image")
+                cont.close()
+                continue
+            break
+        else:
+            raise RuntimeError("capture brute impossible (" + " ; ".join(errors) + ")")
+        self.cont, self.packets, self.fmt, self.format = cont, packets, fmt, label
+        self.frame_bytes = frame_bytes
+        self.size = (w, h)
+        self.fps = float(stream.average_rate or fps)
+        # FFmpeg reports what the card announces: range 2 = full (0-255), 1 = limited; colorspace 1 = BT.709,
+        # 5/6 = BT.601. When the card does not say, HD means BT.709 and limited range (the console default).
+        self.full_range = plage == "pleine" or (plage == "auto" and cc.color_range == 2)
+        self.bt709 = cc.colorspace == 1 or (cc.colorspace not in (5, 6) and h >= 720)
+        self.needs_709 = False  # already converted with the right matrix
+        self.publish(self.wrap(first))
+
+    def wrap(self, pkt):
+        # No copy: the array reads the packet's memory and keeps the packet alive.
+        return self.YuvFrame(np.frombuffer(pkt, np.uint8), self.fmt, self.size[0], self.size[1], self.bt709,
+                             self.full_range)
+
+    def toggle_matrix(self):
+        """C key: BT.709 / BT.601, to compare."""
+        self.bt709 = not self.bt709
+        return "BT.709 (HD)" if self.bt709 else "BT.601"
+
+    def run(self):
+        try:
+            for pkt in self.packets:
+                if not self.running:
+                    break
+                if pkt.size == self.frame_bytes:
+                    self.publish(self.wrap(pkt))
+        except Exception as e:
+            self.error = f"Le flux du boîtier s'est arrêté ({e})."
+        if self.running and not self.error:
+            self.error = "Le flux du boîtier s'est arrêté."
+        self.cont.close()
+
+
 class WindowSource(Source):
     """PS Remote Play (or any window) captured with Windows Graphics Capture; see window_source.py."""
 
@@ -282,8 +351,9 @@ class WindowSource(Source):
             x, y, cw, ch = self.crop[1]
             if cw < 16 or ch < 9:
                 return
-            interp = cv2.INTER_AREA if cw > self.size[0] else cv2.INTER_LINEAR
-            self.publish(cv2.resize(buf[y:y + ch, x:x + cw, :3], self.size, interpolation=interp))
+            # Only the video area is copied (the buffer dies with this call), as it is: the engine brings it
+            # to its working size on the graphics card, and the screen shader does the final scaling.
+            self.publish(buf[y:y + ch, x:x + cw].copy())
             self.first.set()
 
         @self.cap.event
@@ -542,6 +612,7 @@ class Display:
         self.focus_target = focus_target
         self.sharp_scaling = sharp_scaling  # F key: Catmull-Rom scaling, or plain bilinear to compare
         self.fix_709 = fix_709              # C key: BT.709 colours for a capture card
+        self.color_toggle = None            # C key for a raw capture source (changes its matrix instead)
         self.keys_down = set()
         self.queue = collections.deque()
         self.cond = threading.Condition()
@@ -727,8 +798,11 @@ class Display:
             self.sharp_scaling = not self.sharp_scaling
             print(f"\nMise à l'échelle {'FINE (Catmull-Rom)' if self.sharp_scaling else 'BILINÉAIRE (ancienne)'}")
         elif key == "color":
-            self.fix_709 = not self.fix_709
-            print(f"\nCouleurs {'BT.709 (HD)' if self.fix_709 else 'BT.601 (Windows)'}")
+            if self.color_toggle:  # raw capture: the engine's YUV matrix
+                print(f"\nCouleurs {self.color_toggle()}")
+            else:  # BGR from Windows: the display's fix
+                self.fix_709 = not self.fix_709
+                print(f"\nCouleurs {'BT.709 (HD)' if self.fix_709 else 'BT.601 (Windows)'}")
         elif key in (2, 3, 4):
             self.state.mult = key
             print(f"\nMultiplicateur x{self.state.mult}")
@@ -964,6 +1038,12 @@ def main():
     ap.add_argument("--no-cut", action="store_true", help="interpole aussi sur les changements de plan")
     ap.add_argument("--bilineaire", action="store_true",
                     help="ancienne mise à l'échelle vers l'écran, plus floue (touche F pour comparer)")
+    ap.add_argument("--capture", choices=["auto", "brute", "opencv"], default="auto",
+                    help="lecture du boîtier : brute = YUV sans conversion par le processeur (FFmpeg), couleurs "
+                         "converties sur la carte graphique ; opencv = ancienne méthode ; auto = brute si possible")
+    ap.add_argument("--plage", choices=["auto", "limitee", "pleine"], default="auto",
+                    help="plage de couleurs du boîtier en capture brute (auto = ce que le boîtier annonce, "
+                         "sinon limitée, le réglage par défaut des consoles)")
     ap.add_argument("--mesures", action="store_true",
                     help="affiche le temps de chaque étape dans le compteur (touche D)")
     ap.add_argument("--couleurs", choices=["auto", "709", "601"], default="auto",
@@ -1013,8 +1093,28 @@ def main():
         print("  Garde la fenêtre Remote Play ouverte (pas réduite) : Capture Smooth s'affiche par-dessus.")
     else:
         idx, name = pick_device(args.device)
-        src = CaptureSource(idx, w, h, args.fps)
-        print(f"Source : {name} en {src.size[0]}x{src.size[1]} à {src.fps:.0f} fps, format {src.format}")
+        src = None
+        if args.capture != "opencv" and not name.startswith("appareil "):  # raw capture needs the device's name
+            try:
+                src = RawCaptureSource(name, w, h, args.fps, args.plage)
+                if args.couleurs != "auto":
+                    src.bt709 = args.couleurs == "709"
+            except ImportError as e:
+                if args.capture == "brute":
+                    raise RuntimeError(f"capture brute indisponible : PyAV n'est pas installé ({e})")
+            except Exception as e:
+                if args.capture == "brute":
+                    raise RuntimeError(str(e))
+                print(f"(capture brute indisponible, méthode OpenCV : {e})")
+        elif args.capture == "brute":
+            raise RuntimeError("capture brute : donne le nom du boîtier (--device \"nom\"), pas son numéro")
+        if src is not None:
+            print(f"Source : {name} en {src.size[0]}x{src.size[1]} à {src.fps:.0f} fps, format {src.format} brut, "
+                  f"couleurs {'BT.709' if src.bt709 else 'BT.601'} plage {'pleine' if src.full_range else 'limitée'} "
+                  "converties sur la carte graphique")
+        else:
+            src = CaptureSource(idx, w, h, args.fps)
+            print(f"Source : {name} en {src.size[0]}x{src.size[1]} à {src.fps:.0f} fps, format {src.format}")
         if src.format not in CaptureSource.UNCOMPRESSED:
             print("  (format compressé : le boîtier ne passe pas cette résolution et ces fps sans compression)")
         if src.size != (w, h):
@@ -1057,6 +1157,13 @@ def main():
             engine.use_gpu_frames()
         except Exception as e:  # other GPU drives the screen, old driver...: frames go through PC memory
             print(f"(affichage direct GPU indisponible, mode normal : {e})")
+    if isinstance(src, RawCaptureSource):
+        if engine.name == "CUDA":
+            display.color_toggle = src.toggle_matrix
+            display.fix_709 = False  # --couleurs picked the matrix of the conversion itself
+        else:  # converted by OpenCV on the CPU (BT.601): the display fixes the colours, as with the old source
+            display.fix_709 = src.bt709
+            print("  (moteur DirectML : couleurs converties par le processeur)")
     worker = Worker(src, display, state, stats, engine)
     print(f"Prêt. Moteur {engine.name}, image {work[0]}x{work[1]}, IA échelle {scale}, x{args.x}, "
           f"écran {display.refresh} Hz.")

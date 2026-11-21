@@ -9,6 +9,9 @@
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | DirectML engine | MIT |
 | [DirectML](https://github.com/microsoft/DirectML) | DirectML engine | Microsoft DirectML licence (redistributable) |
 | [OpenCV](https://opencv.org) | capture | Apache-2.0 |
+| [PyAV](https://github.com/PyAV-Org/PyAV) | raw capture (NVIDIA build) | BSD-3-Clause |
+| [FFmpeg](https://ffmpeg.org) libraries (shipped inside PyAV, unmodified shared libraries) | raw capture (NVIDIA build) | LGPL-3.0-or-later |
+| [windows-capture](https://github.com/NiiightmareXD/windows-capture) | PS Remote Play window capture | MIT |
 | [NumPy](https://numpy.org) | arrays | BSD-3-Clause |
 | [GLFW](https://www.glfw.org) and [pyGLFW](https://github.com/FlorianRhiem/pyGLFW) | window | zlib / MIT |
 | [PyOpenGL](https://pyopengl.sourceforge.net) | display | BSD-3-Clause |
