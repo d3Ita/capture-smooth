@@ -187,6 +187,8 @@ class CudaEngine:
         self.scale = scale
         self.pinned = {}  # frame shape -> staging buffers in page-locked memory (see to_gpu)
         self.pin_i = 0
+        self.native = None  # (uploaded frame, the same before enlarging) for improve()
+        self.vsr = self.vsr_up = None  # optional NVIDIA Video Super Resolution: clean-up, AI upscaling
         if rife:
             from rife import load_model
             self.net = load_model(app_dir() / "models" / "flownet_v4.6.pkl", half=self.dtype == torch.half)
@@ -216,6 +218,51 @@ class CudaEngine:
         self.gring = None
         self.gi = 0
         self.ctx = torch.inference_mode()
+
+    def enable_cleaning(self, mode):
+        """Compression clean-up of the real frames with NVIDIA Video Super Resolution at the same size (needs the
+        optional NVIDIA module, see vfg_download.py, and an RTX card). mode: a VSR quality name, e.g. DENOISE_MEDIUM."""
+        if not vfg_available():
+            raise RuntimeError("module NVIDIA non installé")
+        from nvvfx import VideoSuperRes
+        from nvvfx.effects.video_super_res import QualityLevel
+        self.vsr = VideoSuperRes(quality=QualityLevel[mode])
+        self.vsr.output_width, self.vsr.output_height = self.W, self.H
+        self.vsr.load()
+        self.clean(self.torch.zeros((1, 3, self.ph, self.pw), device="cuda", dtype=self.dtype))  # loads the model
+        self.torch.cuda.synchronize()
+
+    def _vsr(self, effect, y):
+        """(3, h, w) float32 -> padded working frame, through an NVIDIA Video Super Resolution effect."""
+        out = effect.run(y.contiguous(), non_blocking=True, stream_ptr=self.torch.cuda.current_stream().cuda_stream)
+        y = self.torch.from_dlpack(out.image)[None].clamp(0, 1).to(self.dtype)  # copied right away
+        return self.F.pad(y, (0, self.pw - self.W, 0, self.ph - self.H), mode="replicate")
+
+    def clean(self, x):
+        """Padded frame -> the same, cleaned."""
+        return self._vsr(self.vsr, x[0, :, :self.H, :self.W].float())
+
+    def enable_upscale(self, mode="MEDIUM"):
+        """AI upscaling of the real frames when the source is smaller than the working size (PS Remote Play at
+        1080p on a 1440p screen): NVIDIA Video Super Resolution from the frame as captured, instead of bilinear."""
+        if not vfg_available():
+            raise RuntimeError("module NVIDIA non installé")
+        from nvvfx import VideoSuperRes
+        from nvvfx.effects.video_super_res import QualityLevel
+        self.vsr_up = VideoSuperRes(quality=QualityLevel[mode])
+        self.vsr_up.output_width, self.vsr_up.output_height = self.W, self.H
+        self.vsr_up.load()
+        self.torch.cuda.synchronize()
+
+    def improve(self, x, clean=False, upscale=True):
+        """A real frame as it will be shown: AI-upscaled from the captured frame when it was enlarged on upload,
+        else cleaned if asked, else unchanged. Called right after upload(x), for the same frame."""
+        native = self.native if self.native is not None and self.native[0] is x else None
+        if upscale and native is not None and getattr(self, "vsr_up", None) is not None:
+            return self._vsr(self.vsr_up, native[1])
+        if clean and getattr(self, "vsr", None) is not None:
+            return self.clean(x)
+        return x
 
     def use_gpu_frames(self):
         """Frames are handed to the display on the GPU (no download): a ring of RGBA buffers, more than the
@@ -307,9 +354,14 @@ class CudaEngine:
             x = self.yuv_to_rgb(x, frame)
         else:  # BGR, or BGRA from a window capture
             x = x[..., :3].permute(2, 0, 1)[None].flip(1).to(self.dtype).div_(255)  # -> RGB
+        native = None
         if x.shape[-2:] != (self.H, self.W):
+            if getattr(self, "vsr_up", None) is not None and x.shape[-2] < self.H:
+                native = x[0].float()  # kept for improve(): real frames are upscaled by AI from this
             x = self.F.interpolate(x, size=(self.H, self.W), mode="bilinear", antialias=True, align_corners=False)
-        return self.F.pad(x, (0, self.pw - self.W, 0, self.ph - self.H), mode="replicate")
+        x = self.F.pad(x, (0, self.pw - self.W, 0, self.ph - self.H), mode="replicate")
+        self.native = (x, native) if native is not None else None
+        return x
 
     def _small(self, x):
         """Same reduced grayscale copy as small_gray() on the CPU, computed on the GPU (0-255 scale)."""
