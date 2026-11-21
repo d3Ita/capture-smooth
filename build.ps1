@@ -38,7 +38,7 @@ function Finish($name) {
 
 if ($Only -ne "NVIDIA") {
     & "$(Find-Venv .venv-dml)\Scripts\python.exe" -m PyInstaller @common @onnx --name CaptureSmooth-DirectML `
-        --exclude-module torch smooth.py
+        --exclude-module torch --exclude-module av smooth.py  # raw capture only helps the CUDA engine
     if ($LASTEXITCODE) { throw "build DirectML" }
     Finish "CaptureSmooth-DirectML"
 }
