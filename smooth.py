@@ -103,6 +103,7 @@ def detail_lines(stages, lat, elapsed):
 class State:
     def __init__(self, mult, sharpness=0.3, hud=True, cuts=True):
         self.on = True
+        self.original = False  # B key: every improvement off at once (frames, sharpening, AI scaling), to compare
         self.mult = mult
         self.mult_eff = mult  # what the card actually keeps up with (automatic multiplier)
         self.running = True
@@ -489,7 +490,8 @@ class Worker(threading.Thread):
             with self.stats.lock:
                 self.stats.inp += 1
 
-            eng.set_options(self.state.sharpness if self.state.sharp_on else 0.0, self.state.hud)
+            original = self.state.original  # B key: the picture as it comes in, nothing added, to compare
+            eng.set_options(self.state.sharpness if self.state.sharp_on and not original else 0.0, self.state.hud)
             cut = False
             probe.mark()
             if prev is not None:
@@ -505,8 +507,8 @@ class Worker(threading.Thread):
             # (PS Remote Play), or compression clean-up. Copy and cut tests keep comparing the frames as uploaded
             # (prev), so their thresholds stay valid; the improved ones are shown and interpolated.
             img = cur
-            if getattr(eng, "vsr_up", None) is not None and self.state.ai_upscale \
-                    or getattr(eng, "vsr", None) is not None and self.state.clean:
+            if not original and (getattr(eng, "vsr_up", None) is not None and self.state.ai_upscale
+                                 or getattr(eng, "vsr", None) is not None and self.state.clean):
                 t0 = now()
                 probe.mark()
                 img = eng.improve(cur, self.state.clean, self.state.ai_upscale)
@@ -515,7 +517,7 @@ class Worker(threading.Thread):
             else:
                 clean_s = 0.0
 
-            k = self.state.mult if self.state.on else 1
+            k = self.state.mult if self.state.on and not original else 1
             if prev is None or k == 1 or cut:
                 t0 = now()
                 probe.mark()
@@ -688,6 +690,7 @@ class Display:
             print(f"(mesure du temps d'affichage indisponible : {e})")
             self.timer = None
         self.detail = False  # D key: time of each stage in the counter
+        self.badge = None    # "ORIGINAL" label texture (B key), made on first use
 
         # Small on-screen counter (top-left), toggled with F1 or I.
         self.snapshot = None  # (path, time): save one displayed frame, for checking the app
@@ -751,6 +754,34 @@ class Display:
         glDisable(GL_BLEND)
         glBindTexture(GL_TEXTURE_2D, self.tex)
 
+    def draw_badge(self, ix, iy, vw, vh):
+        """Top-right label while B shows the original picture, so it is never mistaken for the improved one
+        (shown even with the counter hidden)."""
+        if not self.state.original:
+            return
+        if self.badge is None:
+            text = "ORIGINAL  -  B = Capture Smooth"
+            font, size = cv2.FONT_HERSHEY_DUPLEX, 0.9
+            (tw, th), _ = cv2.getTextSize(text, font, size, 2)
+            w, h = tw + 32, th + 26
+            img = np.zeros((h, w, 4), np.uint8)
+            img[:] = (0, 0, 0, 170)
+            cv2.putText(img, text, (16, h - 13), font, size, (90, 200, 255, 255), 2, cv2.LINE_AA)
+            self.btex = glGenTextures(1)
+            glBindTexture(GL_TEXTURE_2D, self.btex)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, img)
+            self.badge = (w, h)
+        w, h = self.badge
+        glViewport(ix + vw - w - 16, iy + vh - h - 16, w, h)
+        glBindTexture(GL_TEXTURE_2D, self.btex)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        self.draw_quad()
+        glDisable(GL_BLEND)
+        glBindTexture(GL_TEXTURE_2D, self.tex)
+
     def no_focus(self):
         """Always on top, never activated (clicks do not take the focus), focus handed back to the target."""
         import ctypes
@@ -764,7 +795,7 @@ class Display:
 
     # Virtual-key codes read in Remote Play mode (the keyboard focus stays with Remote Play).
     GLOBAL_KEYS = {0x1B: "quit", 0x70: "counter", 0x49: "counter", 0x4D: "mute", 0x20: "ai", 0x53: "sharp",
-                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x44: "detail", 0x4E: "clean", 0x55: "upscale", 0x71: "audio-", 0x72: "audio+", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
+                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x44: "detail", 0x4E: "clean", 0x55: "upscale", 0x71: "audio-", 0x72: "audio+", 0x42: "original", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
 
     def poll_global_keys(self):
         import ctypes
@@ -784,7 +815,7 @@ class Display:
             return
         names = {glfw.KEY_ESCAPE: "quit", glfw.KEY_F1: "counter", glfw.KEY_I: "counter", glfw.KEY_M: "mute",
                  glfw.KEY_SEMICOLON: "mute", glfw.KEY_SPACE: "ai", glfw.KEY_S: "sharp", glfw.KEY_H: "hud",
-                 glfw.KEY_F: "scaling", glfw.KEY_C: "color", glfw.KEY_D: "detail", glfw.KEY_N: "clean", glfw.KEY_U: "upscale", glfw.KEY_F2: "audio-", glfw.KEY_F3: "audio+",
+                 glfw.KEY_F: "scaling", glfw.KEY_C: "color", glfw.KEY_D: "detail", glfw.KEY_N: "clean", glfw.KEY_U: "upscale", glfw.KEY_F2: "audio-", glfw.KEY_F3: "audio+", glfw.KEY_B: "original",
                  glfw.KEY_2: 2, glfw.KEY_3: 3, glfw.KEY_4: 4, glfw.KEY_KP_2: 2, glfw.KEY_KP_3: 3, glfw.KEY_KP_4: 4}
         if key in names:  # M sits on ";" with an AZERTY keyboard
             self.act(names[key])
@@ -813,6 +844,9 @@ class Display:
             if self.audio:
                 self.audio.muted = not self.audio.muted
                 print(f"\nSon {'coupé' if self.audio.muted else 'activé'}")
+        elif key == "original":
+            self.state.original = not self.state.original
+            print(f"\n{'IMAGE ORIGINALE (sans aucune amélioration)' if self.state.original else 'Capture Smooth ACTIVÉ'}")
         elif key == "ai":
             self.state.on = not self.state.on
             print(f"\nInterpolation {'ACTIVÉE' if self.state.on else 'DÉSACTIVÉE'}")
@@ -903,13 +937,14 @@ class Display:
         if self.timer:
             self.timer.begin()
         if self.presenter:
-            self.presenter.begin(self.W, self.H, vw, vh, self.sharp_scaling, self.fix_709)
+            self.presenter.begin(self.W, self.H, vw, vh, self.sharp_scaling and not self.state.original, self.fix_709)
         self.draw_quad()
         if self.presenter:
             self.presenter.end()
         if self.timer:
             self.timer.end()
         self.draw_overlay(ix, iy, vw, vh)
+        self.draw_badge(ix, iy, vw, vh)
         if self.snapshot and now() >= self.snapshot[1]:
             from OpenGL.GL import GL_RGB, glReadPixels
             raw = glReadPixels(0, 0, fw, fh, GL_RGB, GL_UNSIGNED_BYTE)
@@ -1109,6 +1144,8 @@ def main():
     ap.add_argument("--doublons", choices=["auto", "strict", "tolerant"], default="auto",
                     help="repérage des images répétées : strict = boîtier (copies identiques), tolérant = image "
                          "compressée (Remote Play), qui s'aide de la cadence ; auto = selon la source")
+    ap.add_argument("--original", action="store_true",
+                    help="démarre sur l'image originale, sans aucune amélioration (touche B pour basculer)")
     ap.add_argument("--mesures", action="store_true",
                     help="affiche le temps de chaque étape dans le compteur (touche D)")
     ap.add_argument("--couleurs", choices=["auto", "709", "601"], default="auto",
@@ -1284,7 +1321,9 @@ def main():
     display.overlay_on = not args.hide_counter or args.mesures
     display.detail = args.mesures
     print("Échap = quitter · Espace = IA on/off · 2/3/4 = multiplicateur · S = netteté · H = HUD · F1 = compteur · M = son\n"
-          "F = mise à l'échelle fine/bilinéaire · C = couleurs BT.709/BT.601 · D = temps de chaque étape\n")
+          "F = mise à l'échelle fine/bilinéaire · C = couleurs BT.709/BT.601 · D = temps de chaque étape\n"
+          "B = image originale, sans Capture Smooth (pour comparer)\n")
+    state.original = args.original
 
     def report():
         while state.running:
@@ -1315,6 +1354,8 @@ def main():
             # Text for the on-screen counter (plain ASCII: the OpenCV font has no accents).
             mode = (f"x{state.mult}" if state.mult_eff >= state.mult else f"x{state.mult_eff} auto") if state.on \
                 else "interpolation OFF"
+            if state.original:
+                mode = "ORIGINAL (B)"
             moving = f"jeu {inp} fps" if inp else "image fixe"
             display.set_info((
                 out,
