@@ -292,7 +292,7 @@ def choose(title="Capture Smooth"):
     ttk.Checkbutton(frm, text="Son du boîtier", variable=audio).grid(row=row, column=0, sticky="w", **pad)
     ttk.Checkbutton(frm, text="Compteur fps (F1)", variable=counter).grid(row=row, column=1, sticky="w", **pad)
 
-    ttk.Label(frm, text="Ferme OBS avant de lancer.  Échap = quitter · Espace = IA on/off · S = netteté · M = son",
+    ttk.Label(frm, text="Ferme OBS avant de lancer.  B = comparer avec l'original · Échap = quitter · M = son",
               foreground="#666").grid(row=row + 1, column=0, columnspan=2, sticky="w", padx=14, pady=(8, 4))
 
     def current():
