@@ -11,9 +11,11 @@ Common interface:
     set_pair(prev, cur)  -> the two frames the next in-betweens are made from
     interp(t)            -> in-between frame at time t in (0, 1), RGBA numpy array
     real(cur)            -> the captured frame itself (sharpened like the others), RGBA numpy array
+    probe()              -> a stage timer for one captured frame (see WallProbe)
 """
 import os
 import sys
+import time
 from pathlib import Path
 
 import cv2
@@ -73,6 +75,60 @@ class FrameCache:
         while len(self.items) > self.keep:
             self.items.pop(next(iter(self.items)))
         return entry[key]
+
+
+class WallProbe:
+    """Times the stages of one captured frame. mark() without a name starts a stage, mark(name) ends it;
+    the time between a mark and the next named one is counted under that name. Wall clock: right for an
+    engine whose calls only return once the work is done (DirectML, CPU)."""
+
+    def __init__(self):
+        self.marks = []
+
+    def mark(self, name=None):
+        self.marks.append((name, time.perf_counter()))
+
+    def ready(self):
+        return True
+
+    def wait(self):
+        pass
+
+    def _ms(self, a, b):
+        return (b - a) * 1000
+
+    def result(self):
+        """{stage: [ms, times]} for this frame (a stage can run several times, e.g. one per in-between)."""
+        out = {}
+        for (_, a), (name, b) in zip(self.marks, self.marks[1:]):
+            if name:
+                s = out.setdefault(name, [0.0, 0])
+                s[0] += self._ms(a, b)
+                s[1] += 1
+        return out
+
+
+class CudaProbe(WallProbe):
+    """Same, with CUDA events: the time the graphics card spent, not the time Python spent queuing the work.
+    Read once the last event is done (ready), so measuring never makes the app wait for the card."""
+
+    def __init__(self, torch):
+        super().__init__()
+        self.torch = torch
+
+    def mark(self, name=None):
+        ev = self.torch.cuda.Event(enable_timing=True)
+        ev.record()
+        self.marks.append((name, ev))
+
+    def ready(self):
+        return self.marks[-1][1].query()
+
+    def wait(self):
+        self.marks[-1][1].synchronize()
+
+    def _ms(self, a, b):
+        return a.elapsed_time(b)
 
 
 class GpuFrame:
@@ -168,9 +224,14 @@ class CudaEngine:
             self.tsteps[t] = self.torch.full((1, 1, sh, sw), t, device="cuda", dtype=self.dtype)
         return self.tsteps[t]
 
-    def upload(self, frame):
-        x = self.torch.from_numpy(frame).cuda(non_blocking=True).permute(2, 0, 1)[None]
-        x = x.flip(1).to(self.dtype).div_(255)  # BGR -> RGB
+    def probe(self):
+        return CudaProbe(self.torch)
+
+    def upload(self, frame, probe=None):
+        x = self.torch.from_numpy(frame).cuda(non_blocking=True)
+        if probe:
+            probe.mark("envoi")  # PC memory -> graphics card; what follows is conversion
+        x = x.permute(2, 0, 1)[None].flip(1).to(self.dtype).div_(255)  # BGR -> RGB
         if self.resize:
             x = self.F.interpolate(x, size=(self.H, self.W), mode="bilinear", antialias=True, align_corners=False)
         return self.F.pad(x, (0, self.pw - self.W, 0, self.ph - self.H), mode="replicate")
@@ -320,7 +381,10 @@ class DmlEngine:
         self.sharp = np.array([float(sharpness) * SHARP_MAX], np.float32)
         self.hud = bool(hud)
 
-    def upload(self, frame):
+    def probe(self):
+        return WallProbe()
+
+    def upload(self, frame, probe=None):  # the frame goes to the card inside the ONNX call, counted with it
         if self.resize:
             frame = cv2.resize(frame, (self.W, self.H), interpolation=cv2.INTER_AREA)
         return np.ascontiguousarray(frame)
