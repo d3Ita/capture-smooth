@@ -67,7 +67,7 @@ Then press **Lancer**. Your choice is remembered. Options passed on the command 
 | 1080p | 30 fps | 90 fps | 60 fps |
 | 1080p | 60 fps | 120 fps | 120 fps |
 
-**Keys:** Esc quit · **B original picture (every improvement off, to compare)** · Space interpolation on/off · 2 / 3 / 4 multiplier · S sharpening · H HUD protection · F1 or I counter · M sound · F sharp/bilinear scaling · C BT.709/BT.601 colours · D time of each stage · U AI upscaling · N compression clean-up · F2 / F3 sound earlier / later
+**Keys:** Esc quit · **B original picture (every improvement off, to compare)** · **E picture effects on/off** · Space interpolation on/off · 2 / 3 / 4 multiplier · S sharpening · H HUD protection · F1 or I counter · M sound · F sharp/bilinear scaling · C BT.709/BT.601 colours · D time of each stage · U AI upscaling · N compression clean-up · F2 / F3 sound earlier / later
 
 ## Without a capture card: PS Remote Play
 
@@ -80,6 +80,16 @@ Capture Smooth can also take the picture from the official **PS Remote Play** ap
 - With the optional NVIDIA module (RTX cards, see below) and a screen above 1080p, each real frame is **enlarged by AI** (NVIDIA Video Super Resolution) to your screen's size, sharper than the usual scaling. For that, keep the Remote Play window at **1920x1080** (not full screen), so Capture Smooth gets the stream at its own size.
 
 A capture card stays the recommended way.
+
+## Picture effects (E key)
+
+Three light effects are applied by the display shader to every frame shown, real and generated, after the scaling and the colour fix. All three are on by default at light strengths, and **E** turns them off or on together. **B** (original picture) turns them off too.
+
+- **Debanding** removes the bands in smooth gradients (sky, fog, soft shadows), which are most visible with PS Remote Play. It leaves edges and HUD text alone, then adds a fine dither before the 8-bit output.
+- **Local contrast** brings out texture relief on brightness only, without burning the highlights or crushing the shadows.
+- **Vibrance** livens up dull colours more than vivid ones and leaves skin tones alone.
+
+The strengths can be set in the settings window or with `--debanding`, `--contraste-local` and `--vibrance` (0 to 1, 0 = off). All three together cost about 0.13 ms per frame at 1440p on an RTX 4070 SUPER. `tools/check_present.py` checks them off-screen.
 
 ## Optional: NVIDIA Frame Generation (RTX cards)
 
@@ -121,6 +131,9 @@ It is **not shipped with Capture Smooth**: it is NVIDIA's software under NVIDIA'
                          about one CPU core less (NVIDIA build; auto = brute when possible, else opencv)
 --plage auto|limitee|pleine   colour range for raw capture (auto = what the card reports, else limited)
 --original               start on the original picture (B toggles it)
+--debanding 0-1          gradient debanding (default 0.4, 0 = off; E toggles all effects)
+--contraste-local 0-1    local contrast (default 0.25)
+--vibrance 0-1           vibrance (default 0.25)
 --mesures                time of each stage in the counter and the log (D toggles it)
 --agrandissement auto|shader   Remote Play on a screen above 1080p: auto = AI upscaling of real frames (NVIDIA module, RTX; U toggles it)
 --nettoyage auto|oui|non  compression clean-up of real frames (NVIDIA module, RTX); off unless oui (N toggles it in Remote Play)
@@ -162,7 +175,7 @@ Génération d'images gratuite et open source pour un **boîtier de capture** : 
 
 Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. Une fenêtre de réglages s'ouvre : choisis la sortie vidéo de la console, les fps du jeu, la fluidité ou la latence, puis clique sur **Lancer**. Tes choix sont mémorisés.
 
-**Touches :** Échap quitter · **B image originale (toutes les améliorations coupées, pour comparer)** · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son · F mise à l'échelle fine/bilinéaire · C couleurs BT.709/BT.601 · D temps de chaque étape · U agrandissement IA · N nettoyage de la compression · F2 / F3 son plus tôt / plus tard
+**Touches :** Échap quitter · **B image originale (toutes les améliorations coupées, pour comparer)** · **E effets d'image on/off** · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son · F mise à l'échelle fine/bilinéaire · C couleurs BT.709/BT.601 · D temps de chaque étape · U agrandissement IA · N nettoyage de la compression · F2 / F3 son plus tôt / plus tard
 
 **Sans boîtier de capture :** choisis **PS Remote Play (sans boîtier)** dans la fenêtre de réglages. Attention : **plus de latence** (50 à 100 ms de plus qu'avec un boîtier, à cause de la compression et du réseau) et image compressée, en 1080p au maximum. Lance PS Remote Play et affiche ton jeu avant, et garde sa fenêtre ouverte (pas réduite). La manette reste active dans Remote Play, et le son vient de Remote Play. Comme l'image est compressée, les images répétées par la console ne reviennent pas tout à fait identiques : Capture Smooth les repère en s'aidant de la cadence du jeu (option `--doublons`). Avec le module NVIDIA (cartes RTX) et un écran plus grand que 1080p, chaque vraie image est **agrandie par IA** à la taille de ton écran, plus nette qu'avec l'agrandissement habituel (touche U) : laisse pour cela la fenêtre Remote Play en **1920x1080** (pas en plein écran).
 
@@ -176,6 +189,12 @@ Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. Une fen
 - **Son du boîtier** : calé automatiquement sur le retard mesuré de l'image ; **F2 / F3** le décalent de 5 ms. Si le son de ton PC est déjà plus lent que l'image (souvent plus de 50 ms en WASAPI partagé), il arrive un peu après l'image et n'est pas retardé davantage (la touche D l'indique).
 - **Son en Remote Play** : joué par l'appli Remote Play, il n'a pas les 20 à 40 ms ajoutés à l'image et peut arriver un peu en avance (pas encore corrigé).
 - **Réglage NVIDIA facultatif, pas encore mesuré** : Panneau de configuration NVIDIA → Gérer les paramètres 3D → *Méthode de présentation Vulkan/OpenGL* → *Préférer superposé sur la chaîne d'échange DXGI* (pilotes 526.47 et suivants). Il peut réduire la latence d'affichage et autoriser le VRR en fenêtre, mais certains signalent une cadence irrégulière : ni conseillé ni déconseillé tant qu'il n'est pas mesuré avec un outil externe.
+- **Effets d'image (touche E)** : trois effets légers sont appliqués à toutes les images affichées, actifs par défaut. Les réglages se font dans la fenêtre de réglages ou avec `--debanding`, `--contraste-local` et `--vibrance` (de 0 à 1, 0 = coupé). B les coupe aussi.
+  - **Debanding** : enlève les bandes dans les dégradés (ciel, brouillard), surtout en PS Remote Play.
+  - **Contraste local** : plus de relief dans les textures, sans brûler les clairs ni boucher les ombres.
+  - **Vibrance** : ravive les couleurs ternes et garde les tons chair.
+
+  Les trois coûtent environ 0,13 ms par image.
 - **NVIDIA Frame Generation** (cartes RTX, version NVIDIA) : dans la fenêtre de réglages, le bouton **Télécharger…** propose la génération d'images de NVIDIA, plus fidèle que RIFE et environ 3 ms plus rapide par image. Ce module appartient à NVIDIA et n'est pas fourni avec Capture Smooth : il est téléchargé depuis le site de NVIDIA (416 Mo) après acceptation de la licence NVIDIA, et rangé dans `%LOCALAPPDATA%\CaptureSmooth\nvidia-vfx` (supprime ce dossier pour l'enlever).
 - **Capture brute** (version NVIDIA) : le boîtier est lu sans conversion par le processeur, et les couleurs sont converties sur la carte graphique (environ un cœur de processeur libéré). Si ça ne marche pas avec ton boîtier, l'app revient toute seule à l'ancienne méthode ; tu peux aussi la forcer avec `--capture opencv`.
 - **Barre des tâches :** l'appli la cache pendant qu'elle tourne. Si elle reste cachée après un plantage, lance `Reafficher la barre des taches.cmd`.
