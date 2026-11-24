@@ -76,8 +76,9 @@ class Stats:
 DELAY_PARTS = (("attente", "attente"), ("calcul", "calcul"), ("file", "file"), ("affichage", "affichage"))
 # Graphics card time (CUDA events, OpenGL timer; wall clock with DirectML), per real frame or per image:
 GPU_PARTS = (("envoi", "envoi"), ("conversion", "conv"), ("doublons", "doublons"), ("analyse", "analyse"), ("amelioration", "VSR"),
-             ("interpolation", "IA/img"), ("finition", "finition"), ("echelle", "echelle/img"))
-PER_IMAGE = ("interpolation", "echelle")
+             ("interpolation", "IA/img"), ("finition", "finition"), ("echelle", "echelle/img"),
+             ("echelle_fx", "echelle+effets/img"))
+PER_IMAGE = ("interpolation", "echelle", "echelle_fx")
 
 
 def detail_lines(stages, lat, elapsed):
@@ -104,6 +105,8 @@ class State:
     def __init__(self, mult, sharpness=0.3, hud=True, cuts=True):
         self.on = True
         self.original = False  # B key: every improvement off at once (frames, sharpening, AI scaling), to compare
+        self.effects = True    # E key: the three picture effects of the display shader (present.py)
+        self.fx = {"deband": 0.4, "lcon": 0.25, "vib": 0.25}  # their strengths, 0-1 (set from the options)
         self.mult = mult
         self.mult_eff = mult  # what the card actually keeps up with (automatic multiplier)
         self.running = True
@@ -590,6 +593,7 @@ class GlTimer:
         self.ids = [int(q) for q in glGenQueries(n)]
         self.free = collections.deque(self.ids)
         self.busy = collections.deque()
+        self.tags = {}
         self.current = None
 
     def begin(self):
@@ -598,15 +602,17 @@ class GlTimer:
             self.current = self.free.popleft()
             glBeginQuery(GL_TIME_ELAPSED, self.current)
 
-    def end(self):
+    def end(self, tag="echelle"):
+        """tag: the stage name the timing will be counted under (what was drawn in between)."""
         from OpenGL.GL import GL_TIME_ELAPSED, glEndQuery
         if self.current is not None:
             glEndQuery(GL_TIME_ELAPSED)
             self.busy.append(self.current)
+            self.tags[self.current] = tag
             self.current = None
 
     def results(self):
-        """Finished timings, in ms."""
+        """Finished timings: [(tag, ms)]."""
         import ctypes
         from OpenGL.GL import GL_QUERY_RESULT, GL_QUERY_RESULT_AVAILABLE
         from OpenGL.raw.GL.VERSION.GL_1_5 import glGetQueryObjectiv
@@ -619,7 +625,7 @@ class GlTimer:
                 break
             q = self.busy.popleft()
             glGetQueryObjectui64v(q, GL_QUERY_RESULT, ctypes.byref(ns))
-            out.append(ns.value / 1e6)
+            out.append((self.tags.get(q, "echelle"), ns.value / 1e6))
             self.free.append(q)
         return out
 
@@ -677,10 +683,22 @@ class Display:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)  # scaling reads past the edges
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, self.W, self.H, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
+        # The full mip chain is allocated once (immutable storage), before the CUDA interop registers the
+        # texture: the local-contrast effect reads a blurred level, refreshed with glGenerateMipmap each frame,
+        # and the storage never changes under CUDA's feet.
+        self.mips = False
+        try:
+            from OpenGL.GL import glTexStorage2D
+            levels = int(np.floor(np.log2(max(self.W, self.H)))) + 1
+            glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, self.W, self.H)
+            self.mips = True
+        except Exception:
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, self.W, self.H, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
         try:
             from present import Presenter
-            self.presenter = Presenter()
+            self.presenter = Presenter(effects=True)
+            if self.presenter.fx_error:  # the effects shader did not compile: scaling and colours as before
+                print(f"(effets d'image indisponibles : {self.presenter.fx_error.splitlines()[0]})")
         except Exception as e:  # very old driver: hardware bilinear, no colour fix
             print(f"(mise à l'échelle fine indisponible : {e})")
             self.presenter = None
@@ -795,7 +813,7 @@ class Display:
 
     # Virtual-key codes read in Remote Play mode (the keyboard focus stays with Remote Play).
     GLOBAL_KEYS = {0x1B: "quit", 0x70: "counter", 0x49: "counter", 0x4D: "mute", 0x20: "ai", 0x53: "sharp",
-                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x44: "detail", 0x4E: "clean", 0x55: "upscale", 0x71: "audio-", 0x72: "audio+", 0x42: "original", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
+                   0x48: "hud", 0x46: "scaling", 0x43: "color", 0x44: "detail", 0x4E: "clean", 0x55: "upscale", 0x71: "audio-", 0x72: "audio+", 0x42: "original", 0x45: "effects", 0x32: 2, 0x33: 3, 0x34: 4, 0x62: 2, 0x63: 3, 0x64: 4}
 
     def poll_global_keys(self):
         import ctypes
@@ -815,7 +833,7 @@ class Display:
             return
         names = {glfw.KEY_ESCAPE: "quit", glfw.KEY_F1: "counter", glfw.KEY_I: "counter", glfw.KEY_M: "mute",
                  glfw.KEY_SEMICOLON: "mute", glfw.KEY_SPACE: "ai", glfw.KEY_S: "sharp", glfw.KEY_H: "hud",
-                 glfw.KEY_F: "scaling", glfw.KEY_C: "color", glfw.KEY_D: "detail", glfw.KEY_N: "clean", glfw.KEY_U: "upscale", glfw.KEY_F2: "audio-", glfw.KEY_F3: "audio+", glfw.KEY_B: "original",
+                 glfw.KEY_F: "scaling", glfw.KEY_C: "color", glfw.KEY_D: "detail", glfw.KEY_N: "clean", glfw.KEY_U: "upscale", glfw.KEY_F2: "audio-", glfw.KEY_F3: "audio+", glfw.KEY_B: "original", glfw.KEY_E: "effects",
                  glfw.KEY_2: 2, glfw.KEY_3: 3, glfw.KEY_4: 4, glfw.KEY_KP_2: 2, glfw.KEY_KP_3: 3, glfw.KEY_KP_4: 4}
         if key in names:  # M sits on ";" with an AZERTY keyboard
             self.act(names[key])
@@ -844,6 +862,11 @@ class Display:
             if self.audio:
                 self.audio.muted = not self.audio.muted
                 print(f"\nSon {'coupé' if self.audio.muted else 'activé'}")
+        elif key == "effects":
+            self.state.effects = not self.state.effects
+            ok = self.presenter is not None and self.presenter.fx
+            print(f"\nEffets d'image {'ACTIVÉS' if self.state.effects else 'DÉSACTIVÉS'}"
+                  + ("" if ok else " (indisponibles sur cette carte)"))
         elif key == "original":
             self.state.original = not self.state.original
             print(f"\n{'IMAGE ORIGINALE (sans aucune amélioration)' if self.state.original else 'Capture Smooth ACTIVÉ'}")
@@ -921,6 +944,13 @@ class Display:
                     self.stats.dropped += 1
             return self.queue.popleft()
 
+    def effects(self):
+        """Strengths of the picture effects for this frame, or None (off, original picture, or no shader)."""
+        if not (self.presenter and self.presenter.fx and self.state.effects and not self.state.original):
+            return None
+        fx = self.state.fx
+        return fx if any(v > 0 for v in fx.values()) else None
+
     def present(self, img):
         fw, fh = glfw.get_framebuffer_size(self.win)
         glViewport(0, 0, fw, fh)
@@ -934,15 +964,27 @@ class Display:
             self.interop.upload(img.tensor.data_ptr(), self.W, self.H)
         else:
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.W, self.H, GL_RGBA, GL_UNSIGNED_BYTE, img)  # RGBA: 5x faster than BGR
+        # Picture effects (E key; B shows the original without them): one pass with the scaling. The timer
+        # covers the mip chain refresh (local contrast) and the draw, so D shows their full cost.
+        fx = self.effects()
         if self.timer:
             self.timer.begin()
+        lod = -1.0
+        if fx and fx.get("lcon", 0) > 0 and self.mips:
+            from OpenGL.GL import GL_LINEAR_MIPMAP_LINEAR, glGenerateMipmap
+            glGenerateMipmap(GL_TEXTURE_2D)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR)
+            lod = self.presenter.blur_lod(self.W, vw)
+        else:  # levels above 0 are stale: plain filtering
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         if self.presenter:
-            self.presenter.begin(self.W, self.H, vw, vh, self.sharp_scaling and not self.state.original, self.fix_709)
+            self.presenter.begin(self.W, self.H, vw, vh, self.sharp_scaling and not self.state.original, self.fix_709,
+                                 fx, lod)
         self.draw_quad()
         if self.presenter:
             self.presenter.end()
         if self.timer:
-            self.timer.end()
+            self.timer.end("echelle_fx" if fx else "echelle")
         self.draw_overlay(ix, iy, vw, vh)
         self.draw_badge(ix, iy, vw, vh)
         if self.snapshot and now() >= self.snapshot[1]:
@@ -979,8 +1021,8 @@ class Display:
                     self.stats.stage(name, (b - a) * 1000)
             if self.timer:
                 try:
-                    for ms in self.timer.results():
-                        self.stats.stage("echelle", ms)
+                    for tag, ms in self.timer.results():
+                        self.stats.stage(tag, ms)
                 except Exception as e:
                     print(f"\n(mesure du temps d'affichage arrêtée : {e})")
                     self.timer = None
@@ -1144,6 +1186,12 @@ def main():
     ap.add_argument("--doublons", choices=["auto", "strict", "tolerant"], default="auto",
                     help="repérage des images répétées : strict = boîtier (copies identiques), tolérant = image "
                          "compressée (Remote Play), qui s'aide de la cadence ; auto = selon la source")
+    ap.add_argument("--debanding", type=float, default=0.4, metavar="0-1",
+                    help="supprime les bandes dans les dégradés (ciel, brouillard), 0 = coupé (défaut 0.4, touche E)")
+    ap.add_argument("--contraste-local", type=float, default=0.25, metavar="0-1",
+                    help="relief des textures sans brûler les clairs ni boucher les ombres, 0 = coupé (défaut 0.25)")
+    ap.add_argument("--vibrance", type=float, default=0.25, metavar="0-1",
+                    help="ravive les couleurs ternes, garde les tons chair, 0 = coupé (défaut 0.25)")
     ap.add_argument("--original", action="store_true",
                     help="démarre sur l'image originale, sans aucune amélioration (touche B pour basculer)")
     ap.add_argument("--mesures", action="store_true",
@@ -1322,8 +1370,10 @@ def main():
     display.detail = args.mesures
     print("Échap = quitter · Espace = IA on/off · 2/3/4 = multiplicateur · S = netteté · H = HUD · F1 = compteur · M = son\n"
           "F = mise à l'échelle fine/bilinéaire · C = couleurs BT.709/BT.601 · D = temps de chaque étape\n"
-          "B = image originale, sans Capture Smooth (pour comparer)\n")
+          "B = image originale, sans Capture Smooth (pour comparer) · E = effets d'image\n")
     state.original = args.original
+    state.fx = {"deband": min(max(args.debanding, 0.0), 1.0), "lcon": min(max(args.contraste_local, 0.0), 1.0),
+                "vib": min(max(args.vibrance, 0.0), 1.0)}
 
     def report():
         while state.running:
@@ -1361,7 +1411,8 @@ def main():
                 out,
                 f"{moving}  {mode}  IA {ai:.0f} ms  retard +{lat:.0f} ms",
                 f"{work[0]}x{work[1]}  net {int(state.sharpness * 100) if state.sharp_on else 0}%  "
-                f"HUD {'ON' if state.hud else 'OFF'}  " + (f"nettoyage {'ON' if state.clean else 'OFF'}  "
+                f"HUD {'ON' if state.hud else 'OFF'}  effets {'ON' if display.effects() else 'OFF'}  "
+                + (f"nettoyage {'ON' if state.clean else 'OFF'}  "
                                                             if state.clean_ready else "") + "son "
                 f"{'OFF' if not display.audio or display.audio.muted else 'ON'}  (F1 = masquer, D = detail)",
                 detail,

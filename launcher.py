@@ -10,7 +10,8 @@ from pathlib import Path
 
 SETTINGS = Path(os.environ.get("APPDATA", Path.home())) / "CaptureSmooth" / "settings.json"
 DEFAULTS = {"source": "capture", "res": "1440p", "game": "30", "mult": "max", "audio": True, "counter": True,
-            "sharp": 30, "hud": True, "engine": "vfg", "clean": False, "upscale": True}
+            "sharp": 30, "hud": True, "engine": "vfg", "clean": False, "upscale": True,
+            "deband": 40, "lcon": 25, "vib": 25}
 
 
 def nvidia_build():
@@ -152,6 +153,8 @@ def to_args(s, test=False):
         args += ["--nettoyage", "oui"]
     if not s.get("upscale", True):
         args += ["--agrandissement", "shader"]
+    args += ["--debanding", f"{s.get('deband', 40) / 100:g}", "--contraste-local", f"{s.get('lcon', 25) / 100:g}",
+             "--vibrance", f"{s.get('vib', 25) / 100:g}"]
     if test:
         args += ["--test", "--windowed", "--test-game-fps", str(game)]
     return args
@@ -254,6 +257,25 @@ def choose(title="Capture Smooth"):
     ttk.Checkbutton(box, text="Protéger le HUD (mini-carte, textes fixes)", variable=hud).grid(
         row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
+    # Picture effects of the display shader (E key in game), 0 = off.
+    fx_vars = {}
+    for i, (key, label, default) in enumerate((("deband", "Debanding", 40), ("lcon", "Contraste local", 25),
+                                               ("vib", "Vibrance", 25))):
+        var = tk.IntVar(value=int(s.get(key, default)))
+        lbl = ttk.Label(box, width=14)
+
+        def upd(*_, var=var, lbl=lbl, default=default):
+            v = var.get()
+            lbl.config(text="désactivé" if v == 0 else f"{v} %" + ("  (conseillé)" if v == default else ""))
+
+        ttk.Label(box, text=label).grid(row=2 + i, column=0, sticky="w", pady=(6 if i == 0 else 0, 0))
+        ttk.Scale(box, from_=0, to=100, variable=var, length=190,
+                  command=lambda v, var=var, upd=upd: (var.set(round(float(v) / 5) * 5), upd())).grid(
+            row=2 + i, column=1, padx=10, pady=(6 if i == 0 else 0, 0))
+        lbl.grid(row=2 + i, column=2, sticky="w", pady=(6 if i == 0 else 0, 0))
+        upd()
+        fx_vars[key] = var
+
     row = 6
     if nvidia_build():
         ebox = ttk.LabelFrame(frm, text=" Moteur IA ", padding=8)
@@ -292,13 +314,13 @@ def choose(title="Capture Smooth"):
     ttk.Checkbutton(frm, text="Son du boîtier", variable=audio).grid(row=row, column=0, sticky="w", **pad)
     ttk.Checkbutton(frm, text="Compteur fps (F1)", variable=counter).grid(row=row, column=1, sticky="w", **pad)
 
-    ttk.Label(frm, text="Ferme OBS avant de lancer.  B = comparer avec l'original · Échap = quitter · M = son",
+    ttk.Label(frm, text="Ferme OBS avant de lancer.  B = comparer avec l'original · E = effets · Échap = quitter",
               foreground="#666").grid(row=row + 1, column=0, columnspan=2, sticky="w", padx=14, pady=(8, 4))
 
     def current():
         return {"source": source.get(), "res": res.get(), "game": game.get(), "mult": mult.get(), "audio": audio.get(),
                 "counter": counter.get(), "sharp": sharp.get(), "hud": hud.get(), "engine": engine.get(),
-                "clean": clean.get(), "upscale": upscale.get()}
+                "clean": clean.get(), "upscale": upscale.get(), **{k: v.get() for k, v in fx_vars.items()}}
 
     def go(test=False):
         c = current()
