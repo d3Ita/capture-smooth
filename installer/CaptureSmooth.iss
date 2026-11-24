@@ -50,6 +50,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
+[InstallDelete]
+; An update replaces the whole program folder: files a previous version shipped and this one does not (old
+; libraries, tkinter...) would otherwise stay behind. Settings and the NVIDIA module live elsewhere (%APPDATA%,
+; %LOCALAPPDATA%\CaptureSmooth) and are kept.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "..\dist\CaptureSmooth-{#Edition}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
