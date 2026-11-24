@@ -67,6 +67,21 @@ def video_devices():
     return names
 
 
+VIRTUAL = ("virtual", "lsvcam", "screen link", "droidcam", "broadcast", "snap camera", "iriun", "xsplit")
+CAPTURE_HINTS = ("capture", "hd60", "4k60", "4k x", "4k s", "elgato", "cam link", "avermedia", "live gamer",
+                 "razer ripsaw", "usb3", "hdmi", "game")
+
+
+def best_capture(names):
+    """(index, name) of the most likely capture card among the device names, or None: real devices first
+    (virtual cameras left out), and among them one whose name looks like a capture card."""
+    real = [(i, n) for i, n in enumerate(names) if not any(v in n.lower() for v in VIRTUAL)]
+    for i, n in real:
+        if any(c in n.lower() for c in CAPTURE_HINTS):
+            return i, n
+    return real[0] if real else None
+
+
 if __name__ == "__main__":
     for i, n in enumerate(video_devices()):
         print(i, n)
