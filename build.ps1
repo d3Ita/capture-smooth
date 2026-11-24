@@ -16,7 +16,7 @@ $onnx = @("--add-data", "models\rife46_1920x1080_s100.onnx;models", "--add-data"
           "--add-data", "models\rife46_2560x1440_s50.onnx;models", "--add-data", "models\post_1920x1080.onnx;models",
           "--add-data", "models\post_2560x1440.onnx;models")
 $common = @("--noconfirm", "--clean", "--noconsole", "--version-file", "version_info.txt", "--distpath", "dist", "--workpath", "build",
-            "--collect-binaries", "glfw", "--collect-all", "windows_capture", "--exclude-module", "matplotlib", "--add-data", "assets\icon.ico;assets",
+            "--collect-binaries", "glfw", "--collect-all", "windows_capture", "--exclude-module", "matplotlib", "--add-data", "assets\icon.ico;assets", "--add-data", "assets\logo.png;assets",
             "--icon", "assets\icon.ico",
             # Settings window: Qt Widgets only (PySide6 through QtPy). The tkinter one is not shipped, nor the Qt
             # modules the app does not use.

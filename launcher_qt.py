@@ -13,7 +13,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_API", "pyside6")  # the binding shipped with the app (QtPy would try PyQt5 first)
 from qtpy.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from qtpy.QtGui import QColor, QFont, QIcon, QPainter
+from qtpy.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from qtpy.QtWidgets import (
     QAbstractButton, QApplication, QButtonGroup, QCheckBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider, QStackedWidget, QVBoxLayout, QWidget,
@@ -21,49 +21,55 @@ from qtpy.QtWidgets import (
 
 from launcher import DEFAULTS, load, nvidia_build, save, to_args, vfg_installed
 
-ACCENT = "#7c5cff"
+# GeForce-like look (the style only, no NVIDIA name or logo): near-black panels, lime green accent with black
+# text on it, square corners, uppercase headings in Bahnschrift (a DIN-like font that ships with Windows).
+ACCENT = "#76b900"
 STYLE = """
-* { font-family: "Segoe UI Variable Text", "Segoe UI"; color: #e8eaf0; }
-QWidget#root { background: #0f1117; }
-QFrame#side { background: #141722; border-right: 1px solid #23283a; }
-QLabel#appname { font-size: 17px; font-weight: 600; }
-QLabel#muted, QLabel#hint { color: #8d93a8; }
+* { font-family: "Segoe UI"; color: #ececec; }
+QWidget#root { background: #0b0b0b; }
+QFrame#side { background: #121212; border-right: 1px solid #262626; }
+QLabel#appname { font-family: "Bahnschrift"; font-size: 15px; font-weight: 600; letter-spacing: 3px; color: #ffffff; }
+QLabel#muted, QLabel#hint { color: #9a9a9a; }
 QLabel#hint { font-size: 12px; }
-QLabel#h1 { font-size: 24px; font-weight: 600; }
-QLabel#h2 { font-size: 13px; font-weight: 600; color: #b9bfd3; letter-spacing: 0.5px; }
+QLabel#h1 { font-family: "Bahnschrift"; font-size: 26px; font-weight: 600; letter-spacing: 1px; color: #ffffff;
+    padding-top: 6px; }
+QLabel#h2 { font-family: "Bahnschrift"; font-size: 12px; font-weight: 600; color: %(accent)s; letter-spacing: 2px;
+    padding-top: 3px; }
 QLabel#warn { color: #f5a524; }
-QLabel#ok { color: #3ddc97; }
-QLabel#big { font-size: 34px; font-weight: 700; color: #ffffff; }
-QPushButton#nav { text-align: left; padding: 10px 14px; border: none; border-radius: 8px; font-size: 14px;
-    color: #b9bfd3; background: transparent; }
-QPushButton#nav:hover { background: #1c2030; }
-QPushButton#nav:checked { background: #23283a; color: #ffffff; }
-QFrame#card { background: #171a24; border: 1px solid #23283a; border-radius: 12px; }
-QPushButton#seg { padding: 8px 16px; border: 1px solid #2a2f40; background: #171a24; color: #b9bfd3; font-size: 13px; }
-QPushButton#seg:hover { background: #1f2333; }
-QPushButton#seg:checked { background: %(accent)s; border-color: %(accent)s; color: #ffffff; }
-QPushButton#seg:disabled { color: #50566b; }
-QPushButton#seg:checked:disabled { background: #2a2f40; border-color: #2a2f40; color: #7a8096; }
-QPushButton#play { background: %(accent)s; color: white; font-size: 16px; font-weight: 600; border: none;
-    border-radius: 10px; padding: 13px 30px; }
-QPushButton#play:hover { background: #8f74ff; }
-QPushButton#play:pressed { background: #6a4bec; }
-QPushButton#ghost { background: transparent; border: 1px solid #2f3547; border-radius: 8px; padding: 8px 16px; }
-QPushButton#ghost:hover { background: #1c2030; }
-QPushButton#ghost:disabled { color: #50566b; border-color: #23283a; }
-QPushButton#link { background: transparent; border: none; color: #8d93a8; text-decoration: underline; padding: 4px; }
-QPushButton#link:hover { color: #c9cde0; }
-QSlider::groove:horizontal { height: 6px; background: #262b3c; border-radius: 3px; }
-QSlider::sub-page:horizontal { background: %(accent)s; border-radius: 3px; }
-QSlider::handle:horizontal { width: 18px; height: 18px; margin: -6px 0; border-radius: 9px; background: #ffffff; }
+QLabel#big { font-family: "Bahnschrift"; font-size: 38px; font-weight: 600; color: #ffffff; }
+QPushButton#nav { font-family: "Bahnschrift"; text-align: left; padding: 11px 14px; border: none;
+    border-left: 3px solid transparent; font-size: 14px; letter-spacing: 1px; color: #b3b3b3; background: transparent; }
+QPushButton#nav:hover { background: #1a1a1a; color: #ffffff; }
+QPushButton#nav:checked { background: #1d1d1d; color: #ffffff; border-left: 3px solid %(accent)s; }
+QFrame#card { background: #161616; border: 1px solid #262626; border-radius: 2px; }
+QPushButton#seg { font-family: "Bahnschrift"; padding: 8px 16px; border: 1px solid #333333; background: #161616;
+    color: #c8c8c8; font-size: 13px; letter-spacing: 0.5px; }
+QPushButton#seg:hover { background: #202020; color: #ffffff; }
+QPushButton#seg:checked { background: %(accent)s; border-color: %(accent)s; color: #000000; font-weight: 600; }
+QPushButton#seg:disabled { color: #555555; }
+QPushButton#seg:checked:disabled { background: #2a2a2a; border-color: #2a2a2a; color: #808080; }
+QPushButton#play { font-family: "Bahnschrift"; background: %(accent)s; color: #000000; font-size: 16px; font-weight: 700;
+    letter-spacing: 2px; border: none; border-radius: 2px; padding: 14px 34px; }
+QPushButton#play:hover { background: #8bd400; }
+QPushButton#play:pressed { background: #5f9600; }
+QPushButton#ghost { font-family: "Bahnschrift"; background: transparent; border: 1px solid %(accent)s; color: %(accent)s;
+    border-radius: 2px; padding: 8px 18px; letter-spacing: 1px; }
+QPushButton#ghost:hover { background: %(accent)s; color: #000000; }
+QPushButton#ghost:disabled { color: #555555; border-color: #333333; }
+QPushButton#link { background: transparent; border: none; color: #9a9a9a; text-decoration: underline; padding: 4px; }
+QPushButton#link:hover { color: %(accent)s; }
+QSlider::groove:horizontal { height: 4px; background: #2e2e2e; }
+QSlider::sub-page:horizontal { background: %(accent)s; }
+QSlider::handle:horizontal { width: 12px; height: 18px; margin: -7px 0; background: #ffffff; border-radius: 1px; }
+QSlider::handle:horizontal:hover { background: %(accent)s; }
 QCheckBox { spacing: 10px; font-size: 13px; }
-QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px; border: 1px solid #3a4054; background: #171a24; }
+QCheckBox::indicator { width: 16px; height: 16px; border-radius: 1px; border: 1px solid #555555; background: #161616; }
 QCheckBox::indicator:checked { background: %(accent)s; border-color: %(accent)s; }
-QProgressBar { background: #262b3c; border: none; border-radius: 4px; height: 8px; text-align: center; }
-QProgressBar::chunk { background: %(accent)s; border-radius: 4px; }
+QProgressBar { background: #2e2e2e; border: none; border-radius: 0; height: 6px; text-align: center; }
+QProgressBar::chunk { background: %(accent)s; }
 QScrollArea { border: none; background: transparent; }
 QScrollBar:vertical { width: 8px; background: transparent; }
-QScrollBar::handle:vertical { background: #2a2f40; border-radius: 4px; min-height: 30px; }
+QScrollBar::handle:vertical { background: #333333; min-height: 30px; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
 """ % {"accent": ACCENT}
 
@@ -114,7 +120,7 @@ class Toggle(QAbstractButton):
         p.setRenderHint(QPainter.Antialiasing)
         on = self.isChecked()
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(ACCENT if on else "#2a2f40"))
+        p.setBrush(QColor(ACCENT if on else "#3a3a3a"))
         p.drawRoundedRect(QRectF(0, 0, 42, 24), 12, 12)
         p.setBrush(QColor("#ffffff"))
         p.drawEllipse(QPointF(30 if on else 12, 12), 9, 9)
@@ -136,7 +142,7 @@ class Segmented(QWidget):
             b.setObjectName("seg")
             b.setCheckable(True)
             b.setCursor(Qt.PointingHandCursor)
-            r = "8px"
+            r = "2px"
             left = f"border-top-left-radius:{r}; border-bottom-left-radius:{r};" if i == 0 else ""
             right = f"border-top-right-radius:{r}; border-bottom-right-radius:{r};" if i == len(choices) - 1 else ""
             b.setStyleSheet(left + right + ("" if i == 0 else "border-left: none;"))
@@ -234,21 +240,19 @@ class Window(QWidget):
         sl = QVBoxLayout(side)
         sl.setContentsMargins(16, 20, 16, 16)
         sl.setSpacing(4)
-        head = QHBoxLayout()
-        icon = QLabel()
-        icon.setPixmap(QIcon(str(asset("icon.ico"))).pixmap(34, 34))
-        head.addWidget(icon)
-        names = QVBoxLayout()
-        names.setSpacing(0)
-        names.addWidget(label("Capture Smooth", "appname"))
-        names.addWidget(label(f"version {version}" if version else "", "hint"))
-        head.addLayout(names, 1)
-        sl.addLayout(head)
-        sl.addSpacing(22)
+        logo = QLabel()
+        pix = QPixmap(str(asset("logo.png")))
+        if not pix.isNull():
+            logo.setPixmap(pix.scaledToWidth(186, Qt.SmoothTransformation))
+        sl.addWidget(logo)
+        sl.addSpacing(6)
+        sl.addWidget(label("CAPTURE SMOOTH", "appname"))
+        sl.addWidget(label(f"version {version}" if version else "", "hint"))
+        sl.addSpacing(24)
         self.pages = QStackedWidget()
         self.nav = QButtonGroup(self)
-        for i, (text, page) in enumerate((("▶   Jouer", self.page_play()), ("◐   Image", self.page_picture()),
-                                         ("✦   Moteur IA", self.page_engine()), ("⌨   Raccourcis", self.page_keys()))):
+        for i, (text, page) in enumerate((("JOUER", self.page_play()), ("IMAGE", self.page_picture()),
+                                         ("MOTEUR IA", self.page_engine()), ("RACCOURCIS", self.page_keys()))):
             b = QPushButton(text)
             b.setObjectName("nav")
             b.setCheckable(True)
@@ -281,7 +285,7 @@ class Window(QWidget):
         lay = QVBoxLayout(page)
         lay.setContentsMargins(36, 30, 36, 28)
         lay.setSpacing(14)
-        lay.addWidget(label(title, "h1"))
+        lay.addWidget(label(title.upper(), "h1"))
         lay.addWidget(label(subtitle, "muted", wrap=True))
         lay.addSpacing(6)
         return page, lay
@@ -344,7 +348,7 @@ class Window(QWidget):
         test.clicked.connect(lambda: self.go(True))
         bottom.addWidget(test, 0, Qt.AlignBottom)
         bottom.addSpacing(12)
-        play = QPushButton("▶   Lancer le jeu")
+        play = QPushButton("LANCER LE JEU")
         play.setObjectName("play")
         play.setCursor(Qt.PointingHandCursor)
         play.setDefault(True)
@@ -385,7 +389,7 @@ class Window(QWidget):
         self.poll.stop()
         dev = self.found["device"]
         self.st_device[0].setText(dev or "aucun boîtier détecté")
-        self.st_device[0].setStyleSheet(f"font-size: 14px; color: {'#3ddc97' if dev else '#f5a524'};")
+        self.st_device[0].setStyleSheet(f"font-size: 14px; color: {ACCENT if dev else '#f5a524'};")
         self.st_gpu[0].setText(self.found["gpu"])
 
     # -------------------------------------------------------------- Picture
@@ -589,8 +593,8 @@ class Window(QWidget):
                 ("U", "agrandissement IA (Remote Play)"), ("N", "nettoyage de la compression (Remote Play)"))
         for i, (k, what) in enumerate(keys):
             key = QLabel(k)
-            key.setStyleSheet("background:#23283a; border:1px solid #2f3547; border-radius:6px; padding:3px 10px;"
-                              "font-weight:600;")
+            key.setStyleSheet("background:#222222; border:1px solid #3a3a3a; border-bottom:2px solid #76b900;"
+                              "border-radius:2px; padding:3px 10px; font-family:'Bahnschrift'; font-weight:600;")
             key.setAlignment(Qt.AlignCenter)
             g.addWidget(key, i, 0)
             g.addWidget(label(what, "muted"), i, 1)
