@@ -52,13 +52,17 @@ The installers need no administrator rights, add Start menu and desktop shortcut
 
 > **"Windows protected your PC"?** The exe is not code-signed (a certificate costs money), so Windows SmartScreen warns about it the first time. Click **More info → Run anyway**. The full source code is in this repository.
 
-Then open **Capture Smooth** from the Start menu or the desktop. A settings window opens. Choose:
+Then open **Capture Smooth** from the Start menu or the desktop. The settings window opens. It works offline: only the optional NVIDIA download uses the Internet.
 
-- your console's output resolution (1440p or 4K, or 1080p),
-- the game's frame rate (30 or 60 fps),
-- smoothness or latency, sound, and the counter.
+- **Jouer**:
+  - shows the capture card and graphics card it found and the AI engine;
+  - choose the source (capture card or PS Remote Play), the console's output resolution, the game's frame rate and smoothness or latency;
+  - shows the expected frame rate and added delay.
+- **Image**: sharpening, the picture effects, HUD protection, sound, counter.
+- **Moteur IA**: NVIDIA Frame Generation (optional download) or RIFE, and the PS Remote Play options.
+- **Raccourcis**: the keys in game.
 
-Then press **Lancer**. Your choice is remembered. Options passed on the command line (below) skip the window.
+Then press **Lancer le jeu**. Your choices are remembered. Options passed on the command line (below) skip the window.
 
 | Console output | Game | Smoothness first | Latency first |
 |---|---|---|---|
@@ -150,7 +154,7 @@ It is **not shipped with Capture Smooth**: it is NVIDIA's software under NVIDIA'
 Windows 10/11 and Python 3.11+.
 
 ```
-pip install numpy opencv-python-headless glfw PyOpenGL sounddevice comtypes av windows-capture
+pip install numpy opencv-python-headless glfw PyOpenGL sounddevice comtypes av windows-capture pyside6-essentials qtpy
 pip install torch --index-url https://download.pytorch.org/whl/cu128     # CUDA engine (RTX 20 to RTX 50)
 pip install onnxruntime-directml                                         # or the DirectML engine
 python smooth.py --res 1440p --x 3
@@ -173,7 +177,17 @@ Génération d'images gratuite et open source pour un **boîtier de capture** : 
 
 > **« Windows a protégé votre ordinateur » ?** L'exe n'est pas signé (un certificat est payant), donc Windows SmartScreen prévient au premier lancement. Clique sur **Informations complémentaires → Exécuter quand même**. Tout le code source est dans ce dépôt.
 
-Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. Une fenêtre de réglages s'ouvre : choisis la sortie vidéo de la console, les fps du jeu, la fluidité ou la latence, puis clique sur **Lancer**. Tes choix sont mémorisés.
+Ensuite, ouvre **Capture Smooth** depuis le menu Démarrer ou le Bureau. La fenêtre de réglages s'ouvre ; elle fonctionne hors ligne, seul le téléchargement facultatif du module NVIDIA utilise Internet.
+
+- **Jouer** :
+  - le boîtier, la carte graphique et le moteur détectés ;
+  - le choix de la source, de la sortie de la console, des fps du jeu et de la priorité ;
+  - les fps et le retard attendus.
+- **Image** : la netteté, les effets, le HUD, le son et le compteur.
+- **Moteur IA** : NVIDIA Frame Generation ou RIFE, et les options PS Remote Play.
+- **Raccourcis** : les touches en jeu.
+
+Clique sur **Lancer le jeu** : tes choix sont mémorisés.
 
 **Touches :** Échap quitter · **B image originale (toutes les améliorations coupées, pour comparer)** · **E effets d'image on/off** · Espace interpolation on/off · 2/3/4 multiplicateur · S netteté · H protection du HUD · F1 ou I compteur · M son · F mise à l'échelle fine/bilinéaire · C couleurs BT.709/BT.601 · D temps de chaque étape · U agrandissement IA · N nettoyage de la compression · F2 / F3 son plus tôt / plus tard
 

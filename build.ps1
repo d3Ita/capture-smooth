@@ -16,8 +16,13 @@ $onnx = @("--add-data", "models\rife46_1920x1080_s100.onnx;models", "--add-data"
           "--add-data", "models\rife46_2560x1440_s50.onnx;models", "--add-data", "models\post_1920x1080.onnx;models",
           "--add-data", "models\post_2560x1440.onnx;models")
 $common = @("--noconfirm", "--clean", "--noconsole", "--version-file", "version_info.txt", "--distpath", "dist", "--workpath", "build",
-            "--collect-binaries", "glfw", "--collect-all", "windows_capture", "--exclude-module", "matplotlib", "--add-data", "assets\icon.ico;assets",
-            "--icon", "assets\icon.ico")
+            "--collect-binaries", "glfw", "--collect-all", "windows_capture", "--exclude-module", "matplotlib", "--add-data", "assets\icon.ico;assets", "--add-data", "assets\logo.png;assets",
+            "--icon", "assets\icon.ico",
+            # Settings window: Qt Widgets only (PySide6 through QtPy). The tkinter one is not shipped, nor the Qt
+            # modules the app does not use.
+            "--exclude-module", "tkinter", "--exclude-module", "PyQt5", "--exclude-module", "PyQt6", "--exclude-module", "PySide2",
+            "--exclude-module", "PySide6.QtNetwork", "--exclude-module", "PySide6.QtQml", "--exclude-module", "PySide6.QtQuick",
+            "--exclude-module", "PySide6.QtOpenGL", "--exclude-module", "PySide6.QtSvg", "--exclude-module", "PySide6.QtPdf")
 
 # The exe opens a settings window on double-click; only the rescue shortcut ships next to it.
 $launchers = [ordered]@{
@@ -27,6 +32,14 @@ $launchers = [ordered]@{
 function Finish($name) {
     $dir = "dist\$name"
     Remove-Item "$dir\_internal\cv2\opencv_videoio_ffmpeg*.dll" -ErrorAction SilentlyContinue  # ffmpeg backend unused
+    # Qt extras the settings window does not need: software OpenGL (~20 MB, the app needs a real GPU anyway) and
+    # Qt's own translations (the window is in French already).
+    $qt = "$dir\_internal\PySide6"
+    Remove-Item "$qt\opengl32sw.dll", "$qt\Qt6Network.dll", "$qt\Qt6Svg.dll", "$qt\plugins\platforms\qdirect2d.dll",
+                "$qt\plugins\iconengines" -Recurse -ErrorAction SilentlyContinue
+    Remove-Item "$qt\translations" -Recurse -ErrorAction SilentlyContinue
+    Get-ChildItem "$qt\plugins\imageformats" -File -ErrorAction SilentlyContinue | Where-Object Name -ne "qico.dll" |
+        Remove-Item  # only the .ico reader is used (window icon)
     foreach ($k in $launchers.Keys) {
         $body = "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`n$name.exe $($launchers[$k])`r`npause`r`n"
         [IO.File]::WriteAllText("$PSScriptRoot\$dir\$k", $body, [Text.UTF8Encoding]::new($false))
@@ -46,7 +59,7 @@ if ($Only -ne "NVIDIA") {
 if ($Only -ne "DirectML") {
     & "$(Find-Venv .venv-cuda128)\Scripts\python.exe" -m PyInstaller @common @onnx --name CaptureSmooth-NVIDIA `
         --add-data "models\flownet_v4.6.pkl;models" --exclude-module onnx --exclude-module torchvision --exclude-module torchaudio `
-        --exclude-module numba --exclude-module llvmlite --exclude-module bitsandbytes --exclude-module PySide6 `
+        --exclude-module numba --exclude-module llvmlite --exclude-module bitsandbytes `
         --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module scipy --exclude-module pandas `
         --exclude-module transformers --exclude-module tensorboard --exclude-module IPython --exclude-module triton `
         --exclude-module sklearn --exclude-module PIL --exclude-module accelerate --exclude-module diffusers `

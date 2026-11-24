@@ -1033,11 +1033,6 @@ class Display:
 
 # ---------------------------------------------------------------- main
 
-VIRTUAL = ("virtual", "lsvcam", "screen link", "droidcam", "broadcast", "snap camera", "iriun", "xsplit")
-CAPTURE_HINTS = ("capture", "hd60", "4k60", "4k x", "4k s", "elgato", "cam link", "avermedia", "live gamer",
-                 "razer ripsaw", "usb3", "hdmi", "game")
-
-
 def pick_device(wanted):
     """Index and name of the capture device: by number, by part of its name, or "auto"."""
     if wanted.isdigit():
@@ -1053,12 +1048,10 @@ def pick_device(wanted):
             if wanted.lower() in n.lower():
                 return i, n
         raise RuntimeError(f"Aucun appareil « {wanted} » trouvé. Appareils vus : {', '.join(names) or 'aucun'}")
-    real = [(i, n) for i, n in enumerate(names) if not any(v in n.lower() for v in VIRTUAL)]
-    for i, n in real:
-        if any(c in n.lower() for c in CAPTURE_HINTS):
-            return i, n
-    if real:
-        return real[0]
+    from devices import best_capture  # also used by the settings window to show the card it found
+    found = best_capture(names)
+    if found:
+        return found
     raise RuntimeError(f"Aucun boîtier de capture trouvé. Appareils vus : {', '.join(names) or 'aucun'}. "
                        "Choisis-en un avec --device \"nom\".")
 
@@ -1199,8 +1192,12 @@ def main():
     ap.add_argument("--couleurs", choices=["auto", "709", "601"], default="auto",
                     help="matrice de couleurs du boîtier : auto = BT.709 si format non compressé en HD (touche C)")
     if len(sys.argv) == 1:  # double-click on the .exe: settings window
-        from launcher import choose
-        chosen = choose(APP)
+        try:  # the Qt settings window; the older tkinter one if Qt is not there (running from source)
+            from launcher_qt import choose
+            chosen = choose(APP, VERSION)
+        except ImportError:
+            from launcher import choose
+            chosen = choose(APP)
         if chosen is None:
             return
         args = ap.parse_args(chosen)
